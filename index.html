@@ -784,6 +784,8 @@ const uid = p => p + Math.random().toString(36).slice(2,9);
 
 const olCover = (path, size='M') => `https://covers.openlibrary.org/b/${path}-${size}.jpg`;
 const amazonURL = isbn => `https://www.amazon.com/dp/${isbn}`;
+const amazonSearch = (title, author) =>
+  'https://www.amazon.com/s?k=' + encodeURIComponent([title, author].filter(Boolean).join(' '));
 
 /* A drawn cover is only ever a fallback for a book with no jacket. */
 const FALLBACK = [['#1E3A5F','#0A1626'],['#8C3B2E','#3E1610'],['#2E5B44','#173226'],
@@ -1186,80 +1188,56 @@ function coverHTML(b, size=''){
    network degrades to "add just the title" rather than blocking a suggestion.
    ========================================================================== */
 /**
- * Google Books over JSONP.
+ * Book lookup, via Open Library.
  *
- * This page is often opened straight from disk, which makes the origin
- * `file://`. Browsers block `fetch()` to any remote host from there, so the
- * lookup would fail silently and every suggestion fell through to "added as
- * typed". A <script> tag is not subject to that restriction, and the Google
- * Books API supports a `callback` parameter, so this works identically from a
- * local file and from a real server.
+ * Google Books was the original choice, but their keyless daily quota is now
+ * zero — every unauthenticated request comes back 429 RESOURCE_EXHAUSTED. Open
+ * Library needs no key, supports CORS, and returns jackets, ISBNs and page
+ * counts, which is everything the confirmation screen shows.
  */
-function jsonp(url, ms = 9000){
-  return new Promise((resolve, reject) => {
-    const cb = 'rd_' + Math.random().toString(36).slice(2,10);
-    const el = document.createElement('script');
-    const done = fn => (...a) => { clearTimeout(timer); delete window[cb]; el.remove(); fn(...a); };
-    const timer = setTimeout(() => done(reject)(new Error('timeout')), ms);
-    window[cb] = done(resolve);
-    el.onerror = () => done(reject)(new Error('script failed'));
-    el.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb;
-    document.head.appendChild(el);
-  });
-}
-
 async function lookupBook(title, author){
-  const build = q => `https://www.googleapis.com/books/v1/volumes?q=${
-    encodeURIComponent(q)}&maxResults=8&printType=books`;
+  const q = (author ? `${title} ${author}` : title).trim();
+  const url = 'https://openlibrary.org/search.json?q=' + encodeURIComponent(q)
+            + '&limit=12&fields=title,author_name,first_publish_year,cover_i,isbn,number_of_pages_median';
 
-  // Try the precise query first, then a looser one — `intitle:` misses a lot
-  // when someone half-remembers a title.
-  const queries = [
-    `intitle:${title}` + (author ? ` inauthor:${author}` : ''),
-    author ? `${title} ${author}` : title,
-  ];
-
-  for (const q of queries){
-    try {
-      const d = await jsonp(build(q));
-      const hits = (d.items || []).map(it => {
-        const v = it.volumeInfo || {};
-        const img = (v.imageLinks || {}).thumbnail || (v.imageLinks || {}).smallThumbnail || '';
-        // Prefer an ISBN-10 so we can build both an Open Library cover and a
-        // direct Amazon product link rather than a search.
-        const ids = v.industryIdentifiers || [];
-        const isbn = (ids.find(x => x.type === 'ISBN_10')
-                   || ids.find(x => x.type === 'ISBN_13') || {}).identifier || '';
-        return {
-          // Guard the concat — `undefined + ''` yields the string "undefined",
-          // which would survive the filter below as a phantom result.
-          title: v.title ? v.title + (v.subtitle ? `: ${v.subtitle}` : '') : '',
-          author: (v.authors || []).join(', '),
-          year: (v.publishedDate || '').slice(0,4),
-          pages: v.pageCount || null,
-          isbn,
-          // Open Library jackets match the club page's look; Google's are a
-          // fallback for anything Open Library doesn't hold.
-          cover: isbn ? olCover(`isbn/${isbn}`)
-               : img ? img.replace(/^http:/, 'https:').replace('&edge=curl','') : '',
-          source: 'Google Books',
-        };
-      }).filter(b => b.title && b.isbn);   // no ISBN, no cover and no Amazon link
-
-      // De-duplicate editions of the same book by title+author.
-      const seen = new Set();
-      const uniq = hits.filter(h => {
-        const k = (h.title + '|' + h.author).toLowerCase();
-        return seen.has(k) ? false : (seen.add(k), true);
-      });
-      if (uniq.length) return uniq.slice(0,5);
-    } catch (e){
-      // Network or script failure — report it rather than pretending we
-      // searched and found nothing.
-      if (q === queries[queries.length-1]) return null;
-    }
+  let data;
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 9000);
+    const r = await fetch(url, { signal: ac.signal }).finally(() => clearTimeout(timer));
+    if (!r.ok) return null;                 // 4xx/5xx — say so, don't claim "no match"
+    data = await r.json();
+    if (data.error) return null;
+  } catch (e){
+    return null;                            // offline, blocked, or opened from file://
   }
-  return [];        // searched successfully, genuinely nothing matched
+
+  const seen = new Set();
+  const hits = (data.docs || [])
+    // A result with no jacket is useless on a confirmation screen, and dropping
+    // them also clears out most of the study guides and summaries.
+    .filter(d => d.title && d.cover_i)
+    .map(d => {
+      const isbns = d.isbn || [];
+      // Amazon /dp/ takes an ISBN-10; a 13 won't resolve.
+      const isbn10 = isbns.find(x => x.length === 10 && /^[0-9Xx]+$/.test(x)) || '';
+      return {
+        title:  d.title,
+        author: (d.author_name || []).join(', '),
+        year:   d.first_publish_year ? String(d.first_publish_year) : '',
+        pages:  d.number_of_pages_median || null,
+        isbn:   isbn10,
+        cover:  olCover(`id/${d.cover_i}`),
+        // Fall back to a search when there's no ISBN-10 to link directly.
+        buy:    isbn10 ? amazonURL(isbn10) : amazonSearch(d.title, (d.author_name||[])[0]),
+      };
+    })
+    .filter(h => {
+      const k = (h.title + '|' + h.author).toLowerCase();
+      return seen.has(k) ? false : (seen.add(k), true);
+    });
+
+  return hits.slice(0,5);                   // [] means searched, nothing matched
 }
 
 /* ==========================================================================
@@ -1608,7 +1586,7 @@ function memberPickMatch(rawTitle, rawAuthor, hits){
  */
 function memberConfirmBook(h, rawTitle, rawAuthor, hits){
   const big = h.cover ? h.cover.replace(/-M\.jpg$/, '-L.jpg') : '';
-  const buy = h.isbn ? amazonURL(h.isbn) : '';
+  const buy = h.buy || (h.isbn ? amazonURL(h.isbn) : '');
   vp().innerHTML = `${practiceBar()}${orgBar()}
     <header class="appbar">
       <button class="nav-btn" id="k-back">${BACK}</button>
@@ -1648,11 +1626,11 @@ function memberConfirmBook(h, rawTitle, rawAuthor, hits){
   const back = () => memberPickMatch(rawTitle, rawAuthor, hits);
   $('#k-back').onclick = back;
   $('#k-no').onclick = back;
-  $('#k-go').onclick = () => commitSuggestion(h.title, h.author, h.cover, h.isbn);
+  $('#k-go').onclick = () => commitSuggestion(h.title, h.author, h.cover, h.isbn, h.buy);
 }
 
 /** Step three: write it to the shelf. */
-function commitSuggestion(title, author, cover, isbn){
+function commitSuggestion(title, author, cover, isbn, buy){
   const me = activeDevice();
 
   const dupe = STORE.books.find(b => b.title.toLowerCase() === title.toLowerCase());
@@ -1670,7 +1648,7 @@ function commitSuggestion(title, author, cover, isbn){
     id: uid('bk'), title, author, isbn: isbn || null,
     coverURL: cover || null,
     coverLarge: cover ? cover.replace(/-M\.jpg$/, '-L.jpg') : null,
-    amazon: isbn ? amazonURL(isbn) : null,
+    amazon: buy || (isbn ? amazonURL(isbn) : null),
     c1, c2, glyph:'📖',
     status:'active', addedAt:new Date().toISOString().slice(0,10),
     byToken: me.token, why:'',
