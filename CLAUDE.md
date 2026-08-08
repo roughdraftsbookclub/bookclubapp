@@ -144,11 +144,27 @@ suggested again.
 Thresholds are config, not hard-coded: `zeroVoteStreakToArchive` (2 consecutive
 meetings with no votes) and `shortlistMissesToArchive` (3 consecutive misses).
 
-⚠️ **Known concern, unresolved.** With a 17-book shelf and 9 voters picking 5,
-only about 8 books get any support on a given night. The three-strikes rule will
-retire books faster than the owner expects — test runs flagged 8 archive
-candidates in a single meeting. Consider raising to 4 or 5 before the first real
-meeting. This was flagged and not yet decided.
+**Resolved: `zeroVoteStreakToArchive: 4`, `shortlistMissesToArchive: 8`** (was 2/3).
+With a 17-book shelf and a 5-8 book shortlist, most books "miss" most nights by
+construction — 9-11 of 17 don't make the cut regardless of whether anyone
+actually dislikes them. Missing the shortlist is a weak signal; scoring zero
+approvals is a strong one, so the two thresholds shouldn't have been close
+together. `tests/archive_sim.js` (not part of the CI suite — a decision-record
+script, rerun it if this ever needs revisiting) ran 5,000 static seasons — no
+new suggestions, worst case — of 12 meetings each: the old 2/3 pushed the shelf
+below the app's own 10-book minimum-to-vote floor by month 3 on average, which
+matches the "8 archive candidates in one meeting" that got this flagged
+originally. 4/8 pushes that out to month ~6.7.
+
+⚠️ **This delays the problem, it doesn't solve it.** At this shelf size, *any*
+static threshold eventually archives past the 10-book floor without new
+suggestions — 5,000-season fuzzing shows ~94% of fully static years still hit
+it eventually, just later. The real fix is that the club keeps suggesting
+occasionally, which the suggestion flow already makes frictionless. If the
+first few real meetings burn through the shelf faster than expected anyway,
+that's a sign the shelf needs replenishing, not a sign to keep raising these
+numbers — a shelf propped up by loose thresholds will start surfacing books
+nobody's actually into.
 
 ### Practice mode
 

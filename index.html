@@ -742,8 +742,14 @@ const CONFIG = {
   shortlistFloor:  3,
   rankDepth:      3,     // Phase Two: rank your top N of the shortlist
   organizerCode: '4021',      // the code on your bookmarked organizer link
-  zeroVoteStreakToArchive: 2,
-  shortlistMissesToArchive: 3,
+  // A 17-book shelf with a 5-8 book shortlist means most books "miss" most
+  // nights by construction — missing is a weak signal, zero votes is a strong
+  // one. Simulated 5,000 static (no new suggestions) seasons: the old 2/3
+  // pushed the shelf below the app's 10-book minimum by month 3 on average.
+  // 4/8 pushes that to month ~6.7 — still not a permanent fix (nothing is,
+  // without new suggestions), but real headroom instead of a few weeks.
+  zeroVoteStreakToArchive: 4,
+  shortlistMissesToArchive: 8,
 };
 
 /* No accounts. The first time a phone opens the link it mints a random ballot
