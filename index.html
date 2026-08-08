@@ -681,20 +681,9 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 </head>
 <body>
 
-<!-- ======================= SIMULATOR CONTROL STRIP ======================== -->
+<!-- ============================ IDENTITY STRIP ============================= -->
 <div class="sim">
-  <div class="previewnote">
-    <strong>Preview — nothing here is saved.</strong>
-    This is a walkthrough of how meeting night will work. Votes don't yet travel
-    between real phones, so use the four buttons below to step into each person's
-    view. Phone 1 is the organizer.
-  </div>
   <div class="devices" id="devices"></div>
-  <div class="simrow">
-    <button class="simbtn" id="sim-vote">Simulate remaining voters</button>
-    <button class="simbtn" id="sim-tie">Force a cutoff pile-up</button>
-    <button class="simbtn warn" id="sim-reset">Reset meeting</button>
-  </div>
 </div>
 
 <!-- ================================= PHONE ================================ -->
@@ -741,7 +730,9 @@ const CONFIG = {
   // padded. Below this the ranked round stops being a real choice.
   shortlistFloor:  3,
   rankDepth:      3,     // Phase Two: rank your top N of the shortlist
-  organizerCode: '4021',      // the code on your bookmarked organizer link
+  // No organizer code here any more — it's checked inside the database now
+  // (see supabase/schema.sql, check_organizer_code), not compared in JS
+  // where anyone reading page source could see it.
   // A 17-book shelf with a 5-8 book shortlist means most books "miss" most
   // nights by construction — missing is a weak signal, zero votes is a strong
   // one. Simulated 5,000 static (no new suggestions) seasons: the old 2/3
@@ -752,12 +743,28 @@ const CONFIG = {
   shortlistMissesToArchive: 8,
 };
 
+/* Supabase project. The anon/publishable key is meant to be public — it ships
+   in every page load by design. What actually protects the data is Row Level
+   Security (supabase/schema.sql), not keeping this key secret. */
+const SUPABASE_URL = 'https://xshhhizeotzfcgfioezq.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_-PCcYrW19CpQV9HBVrnctA_eCocpxtD';
+
 /* No accounts. The first time a phone opens the link it mints a random ballot
    token and keeps it in localStorage. The token is not an identity — it never
    maps to a person — it exists so the organizer can see a count, so a vote can
    be changed before the round closes, and so a phone that locked mid-round
    comes back to the right screen. */
-const SIM_TOKENS = ['tk-s1','tk-s2','tk-s3','tk-s4','tk-s5'];   // the other 5 phones
+const TOKEN_KEY = 'rd-token';
+let MY_TOKEN = localStorage.getItem(TOKEN_KEY);
+if (!MY_TOKEN){ MY_TOKEN = 'tk-' + Math.random().toString(36).slice(2,10); localStorage.setItem(TOKEN_KEY, MY_TOKEN); }
+
+/* The organizer console lives behind a link with ?organizer on it, same idea
+   as a bookmarked URL — the passcode is the real gate, this just decides
+   whether the entry point even shows up. Sticks in localStorage so the
+   bookmark only needs the ?organizer param the first time. */
+const ORG_LINK_KEY = 'rd-organizer-link';
+if (new URLSearchParams(location.search).has('organizer')) localStorage.setItem(ORG_LINK_KEY, '1');
+const IS_ORGANIZER_LINK = localStorage.getItem(ORG_LINK_KEY) === '1';
 
 /* The club's actual shelf, imported from the public page.
    [title, author, isbn, openLibraryCoverPath] */
@@ -845,53 +852,23 @@ const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-$
 const prettyDate = s => new Date(s + 'T00:00:00')
   .toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
 
+/* books, club and meeting all start empty and get filled in by bootstrap()
+   from Supabase — see the bottom of this file. Nothing here is seed data any
+   more; supabase/seed.sql owns the real shelf now. */
 const STORE = {
-  books: seedBooks(),
-  currentBookId: CURRENT_ID,           // Barbarian Days
-  /* Club-level settings the organiser controls. */
-  club: {
-    autoDate: true,                     // follow the second-Thursday rule
-    date: ymd(nextClubMeeting()),
-    time: '7:00 PM',
-    host: 'Chris Taylor',
-    location: '',
-    locationNote: '',
-  },
+  books: [],
+  currentBookId: null,
+  club: { autoDate: true, date: '', time: '', host: '', location: '', locationNote: '' },
   meeting: null,
-  // Four phones that followed the texted link. Phone 1 also opened the
-  // organizer URL, so it votes on the same ballot as everyone else and runs
-  // the meeting from the same handset.
-  devices: [
-    { id:'dev0', label:'Phone 1', token:'tk-a1', isOrganizer:true },
-    { id:'dev1', label:'Phone 2', token:'tk-b2' },
-    { id:'dev2', label:'Phone 3', token:'tk-c3' },
-    { id:'dev3', label:'Phone 4', token:'tk-d4' },
-  ],
-  activeDeviceId: 'dev0',
   adminOpen: false,            // organizer console pulled up
   organizerUnlocked: false,    // passcode entered this session
+  organizerCode: null,         // held in memory only, needed on every organizer RPC call
   adminTab: 'meeting',
   resultsRound: 0,
 };
 
-function newMeeting(isPractice=false){
-  return {
-    id: uid('mt'),
-    date: new Date().toISOString().slice(0,10),
-    isPractice,
-    // lobby | approval | shortlist_review | ranked | results
-    phase: 'lobby',
-    candidateIds: STORE.books.filter(b => b.status === 'active').map(b => b.id),
-    approvalBallots: {},   // token -> [bookId]
-    rankBallots:     {},   // token -> [bookId] ordered
-    shortlistIds:    null,
-    tie: null,             // { need, cutoffVotes, contenders:[bookId] }
-    result: null,
-    archiveQueue: null,
-    expectedVoters: 9,
-  };
-}
-STORE.meeting = newMeeting();
+/** The one identity for this browser — no more per-device switching. */
+const activeDevice = () => ({ token: MY_TOKEN, isOrganizer: IS_ORGANIZER_LINK });
 
 /* ==========================================================================
    2. RANKED-CHOICE (INSTANT RUNOFF)
@@ -1030,8 +1007,17 @@ function computeShortlist(){
   return { list: filled, tie:null, cutShort:{ droppedAt: cutoffVotes, dropped: 0, thin:true } };
 }
 
-function closeApproval(){
+/* Phase transitions are computed locally with the same tested functions as
+   always (computeShortlist / runIRV / buildArchiveQueue), then persisted
+   through advance_phase() so every phone sees the move at once and a random
+   request can't skip a phase without the organizer passcode. */
+async function closeApproval(){
   const { list, cutShort } = computeShortlist();
+  const { error } = await supa.rpc('advance_phase', {
+    p_code: STORE.organizerCode, p_meeting_id: M().id, p_new_phase: 'shortlist_review',
+    p_shortlist_ids: list, p_cut_short: cutShort || null,
+  });
+  if (error){ toast('Could not close Phase One — try again'); return; }
   M().tie = null;                    // the organizer never breaks a tie
   M().shortlistIds = list;
   M().cutShort = cutShort || null;
@@ -1039,23 +1025,31 @@ function closeApproval(){
   render();
 }
 
-function startRanked(){
+async function startRanked(){
+  const { error } = await supa.rpc('advance_phase', {
+    p_code: STORE.organizerCode, p_meeting_id: M().id, p_new_phase: 'ranked',
+  });
+  if (error){ toast('Could not open Phase Two — try again'); return; }
   M().phase = 'ranked';
   M().rankBallots = {};
   render();
 }
 
-function closeRanked(){
+async function closeRanked(){
   const ballots = Object.values(M().rankBallots);
   const irv = runIRV(ballots, M().shortlistIds);
-  M().result = {
-    irv,
-    winnerId: irv.winner,
-    approval: approvalTally(),
-    voters: approvalCount(),
-    rankVoters: ballots.length,
+  const result = {
+    irv, winnerId: irv.winner, approval: approvalTally(),
+    voters: approvalCount(), rankVoters: ballots.length,
   };
-  M().archiveQueue = buildArchiveQueue();
+  const archiveQueue = buildArchiveQueue();
+  const { error } = await supa.rpc('advance_phase', {
+    p_code: STORE.organizerCode, p_meeting_id: M().id, p_new_phase: 'results',
+    p_result: result, p_archive_queue: archiveQueue,
+  });
+  if (error){ toast('Could not close voting — try again'); return; }
+  M().result = result;
+  M().archiveQueue = archiveQueue;
   M().phase = 'results';
   STORE.resultsRound = 0;
   render();
@@ -1078,89 +1072,21 @@ function buildArchiveQueue(){
   }).filter(Boolean);
 }
 
-/** Applying results is the only step that mutates the permanent book records. */
-function publishResults(){
-  if (M().isPractice){
-    toast('Practice run — nothing was saved');
-    STORE.meeting = newMeeting(true);
-    render();
-    return;
-  }
-  const t = approvalTally();
-  const madeShortlist = new Set(M().shortlistIds || []);
-
-  M().candidateIds.forEach(id => {
-    const b = book(id);
-    b.meetingsConsidered++;
-    b.zeroVoteStreak  = (t[id] === 0) ? b.zeroVoteStreak + 1 : 0;
-    b.shortlistMisses = madeShortlist.has(id) ? 0 : b.shortlistMisses + 1;
-    if (madeShortlist.has(id)) b.everShortlisted = true;
-  });
-
-  (M().archiveQueue || []).forEach(({id, reason}) => {
-    const b = book(id);
-    b.status = 'archived'; b.archiveReason = reason;
-    b.archivedAt = new Date().toISOString().slice(0,10);
-  });
-
-  if (STORE.currentBookId){ const prev = book(STORE.currentBookId); if (prev) prev.status = 'read'; }
+/** Applying results is the only step that mutates the permanent book records —
+    one database transaction (publish_results, in supabase/schema.sql) rather
+    than several round trips a half-loaded phone could leave half-applied. */
+async function publishResults(){
   const w = book(M().result.winnerId);
-  if (w){ w.status = 'current'; STORE.currentBookId = w.id; }
-
+  const { error } = await supa.rpc('publish_results', {
+    p_code: STORE.organizerCode,
+    p_meeting_id: M().id,
+    p_winner_id: M().result.winnerId,
+    p_approval_tally: approvalTally(),
+    p_archive_queue: M().archiveQueue || [],
+  });
+  if (error){ toast('Could not publish — try again'); return; }
   toast(`${w ? w.title : 'Winner'} is now the club's book`);
-  STORE.meeting = newMeeting(false);
-  render();
-}
-
-/* ==========================================================================
-   4. SIMULATED VOTERS  (prototype only — stands in for other phones)
-   ========================================================================== */
-function simulateVoters(){
-  const m = M();
-  if (m.phase === 'approval'){
-    SIM_TOKENS.forEach(tk => {
-      if (m.approvalBallots[tk]) return;
-      const pool = [...m.candidateIds].sort(() => Math.random() - 0.55);
-      const n = 1 + Math.floor(Math.random() * CONFIG.maxApprovals);   // 1..max
-      m.approvalBallots[tk] = pool.slice(0, n);
-    });
-    toast('The other phones voted');
-  } else if (m.phase === 'ranked'){
-    SIM_TOKENS.forEach(tk => {
-      if (m.rankBallots[tk]) return;
-      const pool = [...m.shortlistIds].sort(() => Math.random() - 0.5);
-      m.rankBallots[tk] = pool.slice(0, CONFIG.rankDepth);
-    });
-    toast('The other phones ranked');
-  } else {
-    toast('Open a voting round first');
-  }
-  render();
-}
-
-/**
- * Rig a tally that defeats even the flexible cutoff: two clear leaders, then
- * eight books dead level across the whole 5–8 window, so there is no gap to
- * cut on and the decision genuinely belongs to the admin.
- */
-function forceTie(){
-  const m = M();
-  if (m.phase !== 'approval'){ toast('Start Phase One first'); return; }
-  if (m.candidateIds.length < 10){ toast('Need at least 10 books on the table'); return; }
-  m.approvalBallots = {};
-  const c = m.candidateIds;
-  const all = [...STORE.devices.map(d => d.token), ...SIM_TOKENS];
-  const give = (i, ids) => m.approvalBallots[all[i]] = ids;
-  give(0, [c[0],c[1],c[2],c[3]]);
-  give(1, [c[0],c[1],c[4],c[5]]);
-  give(2, [c[0],c[1],c[6],c[7]]);
-  give(3, [c[0],c[8],c[9],c[2]]);
-  give(4, [c[0],c[3],c[4],c[5]]);
-  give(5, [c[0],c[6],c[7],c[8]]);
-  give(6, [c[1],c[9],c[2],c[3]]);
-  give(7, [c[1],c[4],c[5],c[6]]);
-  give(8, [c[1],c[7],c[8],c[9]]);
-  toast('Two leaders, eight level — close Phase One and watch it cut short');
+  await Promise.all([refreshBooks(), refreshCurrentMeeting()]);
   render();
 }
 
@@ -1172,7 +1098,6 @@ const $$ = (s,r=document) => [...r.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const vp = () => $('#viewport');
-const activeDevice = () => STORE.devices.find(d => d.id === STORE.activeDeviceId);
 const plural = (n,s,p) => `${n} ${n===1?s:p}`;
 
 function coverHTML(b, size=''){
@@ -1293,8 +1218,8 @@ function qrSVG(seed, size=132){
 /* ==========================================================================
    6. MEMBER SCREENS
    ========================================================================== */
-const localPick = {};   // deviceId -> [bookId]   (Phase One, unsubmitted)
-const localRank = {};   // deviceId -> [bookId]   (Phase Two, unsubmitted)
+let localPick = [];   // this browser's unsubmitted Phase One picks
+let localRank = [];   // this browser's unsubmitted Phase Two ranking
 
 function renderMember(){
   const d = M(), me = activeDevice();
@@ -1315,8 +1240,8 @@ function renderMember(){
    Nominating is open between meetings and in the lobby, and locks the moment
    Phase One opens — the candidate list must not move under a ballot already
    in progress. */
-const memberNav = {};                       // deviceId -> {screen, bookId}
-const nav = () => memberNav[STORE.activeDeviceId] ||= { screen:'home', bookId:null };
+let memberNav = { screen:'home', bookId:null };
+const nav = () => memberNav;
 const goto = (screen, bookId=null) => {
   Object.assign(nav(), { screen, bookId });
   render();
@@ -1636,7 +1561,7 @@ function memberConfirmBook(h, rawTitle, rawAuthor, hits){
 }
 
 /** Step three: write it to the shelf. */
-function commitSuggestion(title, author, cover, isbn, buy){
+async function commitSuggestion(title, author, cover, isbn, buy){
   const me = activeDevice();
 
   const dupe = STORE.books.find(b => b.title.toLowerCase() === title.toLowerCase());
@@ -1649,32 +1574,39 @@ function commitSuggestion(title, author, cover, isbn, buy){
   }
 
   const [c1,c2] = FALLBACK[Math.floor(Math.random()*FALLBACK.length)];
-
-  STORE.books.push({
+  const row = {
     id: uid('bk'), title, author, isbn: isbn || null,
-    coverURL: cover || null,
-    coverLarge: cover ? cover.replace(/-M\.jpg$/, '-L.jpg') : null,
+    cover_url: cover || null,
+    cover_large: cover ? cover.replace(/-M\.jpg$/, '-L.jpg') : null,
     amazon: buy || (isbn ? amazonURL(isbn) : null),
-    c1, c2, glyph:'📖',
-    status:'active', addedAt:new Date().toISOString().slice(0,10),
-    byToken: me.token, why:'',
+    c1, c2, glyph: '📖',
+    status: 'active', added_at: new Date().toISOString().slice(0,10),
+    by_token: me.token,
     // A confirmed lookup carries its own cover and author, so it needs no
     // cleanup. A raw title does.
-    needsReview: !cover,
-    meetingsConsidered:0, zeroVoteStreak:0, shortlistMisses:0,
-    everShortlisted:false, archiveReason:null, archivedAt:null,
-  });
+    needs_review: !cover,
+  };
 
-  // A book added before voting opens joins tonight's ballot.
-  if (M().phase === 'lobby')
-    M().candidateIds = STORE.books.filter(b => b.status === 'active').map(b => b.id);
+  const { error } = await supa.from('books').insert(row);
+  if (error){
+    toast("Couldn't add that — check your connection and try again");
+    return;
+  }
+  STORE.books.push(bookFromRow(row));
+
+  // A book added before voting opens joins tonight's ballot. No passcode —
+  // suggesting was never organizer-gated (add_candidate_if_lobby, schema.sql).
+  if (M().phase === 'lobby'){
+    M().candidateIds = [...M().candidateIds, row.id];
+    supa.rpc('add_candidate_if_lobby', { p_book_id: row.id });
+  }
 
   goto('books');
   toast(`${title} is on the table`);
 }
 
 function memberApproval(token){
-  const picked = localPick[STORE.activeDeviceId] ||= [];
+  const picked = localPick;
   const max = CONFIG.maxApprovals;
   const full = picked.length >= max;
 
@@ -1716,16 +1648,27 @@ function memberApproval(token){
     memberApproval(token);
     vp().querySelector('.body').scrollTop = st;
   });
-  $('#submit-approval').onclick = () => {
-    M().approvalBallots[token] = [...picked];
-    delete localPick[STORE.activeDeviceId];
+  $('#submit-approval').onclick = async () => {
+    const ids = [...picked];
+    M().approvalBallots[token] = ids;      // optimistic — corrected below on failure
+    localPick = [];
     render();
+    const { error } = await supa.from('ballots').upsert(
+      { meeting_id: M().id, token, phase: 'approval', book_ids: ids, updated_at: new Date().toISOString() },
+      { onConflict: 'meeting_id,token,phase' }
+    );
+    if (error){
+      delete M().approvalBallots[token];
+      localPick = ids;
+      toast('Vote failed to save — try again');
+      render();
+    }
   };
 }
 
 function memberWaiting(kind){
   const copy = {
-    approval: ['Vote received','Phones down — we\'ll pull the six most-wanted books in a moment.'],
+    approval: ['Vote Received', ''],
     counting: ['Counting','The organizer is putting the shortlist together.'],
     ranked:   ['Ranking received','That\'s everything we need from you. Back to the conversation.'],
   }[kind];
@@ -1736,20 +1679,20 @@ function memberWaiting(kind){
         <svg width="34" height="26" viewBox="0 0 12 9" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M1 4.4 4.3 7.7 11 1" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
       <h2>${copy[0]}</h2>
-      <p>${copy[1]}</p>
+      ${copy[1] ? `<p>${copy[1]}</p>` : ''}
       <p class="note breathe">${voted} of ${M().expectedVoters} in…</p>
     </div>`;
 }
 
 function memberRank(token){
-  const ranked = localRank[STORE.activeDeviceId] ||= [];
+  const ranked = localRank;
   const depth = CONFIG.rankDepth;
   const rest = M().shortlistIds.filter(id => !ranked.includes(id));
 
   vp().innerHTML = `${practiceBar()}${orgBar()}
     <header class="appbar">
       <h1>Rank your top ${depth}</h1>
-      <div class="sub">Tap to add. Drag the handle to reorder.</div>
+      <div class="sub">Tap to add, ✕ to remove. Drag the handle to reorder.</div>
     </header>
     <div class="body">
       <div class="ranksec" id="ranksec">
@@ -1759,6 +1702,9 @@ function memberRank(token){
             <span class="badge">${i+1}</span>
             ${coverHTML(b)}
             <span class="meta"><span class="rt">${esc(b.title)}</span><div class="ra">${esc(b.author)}</div></span>
+            <button class="iconbtn" data-remove="${id}" title="Remove">
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg>
+            </button>
             <span class="handle" data-drag="1">
               <svg width="16" height="14" viewBox="0 0 16 14" fill="currentColor"><rect y="1" width="16" height="1.8" rx=".9"/><rect y="6.1" width="16" height="1.8" rx=".9"/><rect y="11.2" width="16" height="1.8" rx=".9"/></svg>
             </span>
@@ -1793,9 +1739,13 @@ function memberRank(token){
     if (ranked.length >= depth){ toast(`You've ranked ${depth}. Remove one first.`); return; }
     ranked.push(el.dataset.add); redraw();
   });
-  $$('.rankslot').forEach(el => el.onclick = e => {
-    if (e.target.closest('[data-drag]')) return;      // handle drags, not taps
-    const i = ranked.indexOf(el.dataset.id);
+  // A dedicated button rather than "tap the row" — on a touchscreen a tap
+  // with even slight finger movement can get swallowed as a scroll instead
+  // of firing a click, which made removing a ranked book unreliable on
+  // real phones even though it worked fine with a mouse.
+  $$('[data-remove]').forEach(el => el.onclick = e => {
+    e.stopPropagation();
+    const i = ranked.indexOf(el.dataset.remove);
     if (i >= 0){ ranked.splice(i,1); redraw(); }
   });
   wireDrag($('#ranksec'), ranked, redraw);
@@ -1847,7 +1797,7 @@ function wireDrag(container, arr, redraw){
 }
 
 function memberReview(token){
-  const ranked = localRank[STORE.activeDeviceId] || [];
+  const ranked = localRank;
   vp().innerHTML = `${practiceBar()}${orgBar()}
     <header class="appbar">
       <button class="nav-btn" id="rank-back"><svg width="11" height="18" viewBox="0 0 11 18" fill="none"><path d="M9.5 1.5 2 9l7.5 7.5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
@@ -1870,10 +1820,21 @@ function memberReview(token){
       <button class="btn btn-ghost" id="rank-edit">Edit My Ranking</button>
     </div>`;
   $('#rank-back').onclick = $('#rank-edit').onclick = () => memberRank(token);
-  $('#submit-rank').onclick = () => {
-    M().rankBallots[token] = [...ranked];
-    delete localRank[STORE.activeDeviceId];
+  $('#submit-rank').onclick = async () => {
+    const ids = [...ranked];
+    M().rankBallots[token] = ids;
+    localRank = [];
     render();
+    const { error } = await supa.from('ballots').upsert(
+      { meeting_id: M().id, token, phase: 'ranked', book_ids: ids, updated_at: new Date().toISOString() },
+      { onConflict: 'meeting_id,token,phase' }
+    );
+    if (error){
+      delete M().rankBallots[token];
+      localRank = ids;
+      toast('Ranking failed to save — try again');
+      render();
+    }
   };
 }
 
@@ -2129,18 +2090,16 @@ function adminMeeting(el){
       <input class="control" id="c-note" type="text" value="${esc(c.locationNote)}" placeholder="Park on the street">
       <div style="height:13px"></div>
       <button class="btn btn-primary btn-sm" id="c-save">Update meeting details</button>
-    </div>
-    <div class="panel">
-      <h3>Practice mode</h3>
-      <div class="switch">
-        <span><span class="lbl">Sandbox this meeting</span>
-          <div class="desc">Clones the active book list. Votes, archives and the public site are untouched.</div></span>
-        <button class="toggle" id="a-practice" aria-pressed="${m.isPractice}"></button>
-      </div>
     </div>`;
 
   const on = (sel,fn) => { const e = $(sel); if (e) e.onclick = fn; };
-  on('#a-start',  () => { m.phase = 'approval'; render(); });
+  on('#a-start', async () => {
+    const { error } = await supa.rpc('advance_phase', {
+      p_code: STORE.organizerCode, p_meeting_id: m.id, p_new_phase: 'approval',
+    });
+    if (error){ toast('Could not open voting — try again'); return; }
+    m.phase = 'approval'; render();
+  });
   on('#a-close1', closeApproval);
   on('#a-start2', startRanked);
   on('#a-close2', closeRanked);
@@ -2155,19 +2114,19 @@ function adminMeeting(el){
     if (c.autoDate) c.date = ymd(nextClubMeeting());
     renderAdmin();
   });
-  on('#c-save', () => {
+  on('#c-save', async () => {
     if (!c.autoDate) c.date = $('#c-date').value || c.date;
     c.time = $('#c-time').value.trim() || c.time;
     c.host = $('#c-host').value.trim();
     c.location = $('#c-loc').value.trim();
     c.locationNote = $('#c-note').value.trim();
+    const { error } = await supa.rpc('update_club_settings', {
+      p_code: STORE.organizerCode, p_auto_date: c.autoDate, p_date: c.date,
+      p_time: c.time, p_host: c.host, p_location: c.location, p_location_note: c.locationNote,
+    });
+    if (error){ toast('Could not save — try again'); return; }
     toast('Members will see the new details');
     renderAdmin();
-  });
-  on('#a-practice', () => {
-    STORE.meeting = newMeeting(!m.isPractice);
-    toast(!m.isPractice ? 'Practice meeting created' : 'Back to the real meeting');
-    render();
   });
 
   $$('[data-keep]').forEach(e => e.onclick = () => {
@@ -2365,20 +2324,16 @@ function adminHistory(el){
 /* ==========================================================================
    8. SHELL
    ========================================================================== */
-function renderDevices(){
+/** Replaces the old four-phone switcher: one real identity per browser. */
+function renderIdentity(){
+  const el = $('#devices');
+  if (!el) return;
+  const me = activeDevice();
   const m = M();
-  $('#devices').innerHTML = STORE.devices.map(d => {
-    const voted = m.phase === 'ranked'   ? !!m.rankBallots[d.token]
-                : m.phase === 'approval' ? !!m.approvalBallots[d.token] : false;
-    return `<button class="dev ${voted?'voted':''}" data-dev="${d.id}"
-      aria-pressed="${d.id===STORE.activeDeviceId}"><i class="dot"></i>${esc(d.label)}${
-      d.isOrganizer ? '<em class="orgtag">organizer</em>' : ''}</button>`;
-  }).join('');
-  $$('[data-dev]').forEach(e => e.onclick = () => {
-    STORE.activeDeviceId = e.dataset.dev;
-    STORE.adminOpen = false;
-    render();
-  });
+  const voted = m && (m.phase === 'ranked'   ? !!m.rankBallots[me.token]
+                     : m.phase === 'approval' ? !!m.approvalBallots[me.token] : false);
+  el.innerHTML = `<span class="dev ${voted?'voted':''}" aria-pressed="true">
+    <i class="dot"></i>You${me.isOrganizer ? '<em class="orgtag">organizer</em>' : ''}</span>`;
 }
 
 /** Thin strip only the organizer sees, sitting on top of the normal member app. */
@@ -2421,23 +2376,27 @@ function organizerGate(){
   f.oninput = () => {
     f.value = f.value.replace(/\D/g,'');
     $('#g-err').style.visibility = 'hidden';
-    go.disabled = f.value.length !== CONFIG.organizerCode.length;
+    go.disabled = f.value.length !== 4;
   };
   f.onkeydown = e => { if (e.key === 'Enter' && !go.disabled) go.click(); };
-  go.onclick = () => {
-    if (f.value === CONFIG.organizerCode){
+  go.onclick = async () => {
+    const code = f.value;
+    go.disabled = true;
+    const { data, error } = await supa.rpc('check_organizer_code', { p_code: code });
+    if (!error && data === true){
       STORE.organizerUnlocked = true;
+      STORE.organizerCode = code;   // held in memory, sent with every organizer RPC below
       render();
     } else {
       $('#g-err').style.visibility = 'visible';
-      f.value = ''; go.disabled = true; f.focus();
+      f.value = ''; f.focus();
     }
   };
   $('#g-cancel').onclick = () => { STORE.adminOpen = false; render(); };
 }
 
 function render(){
-  renderDevices();
+  renderIdentity();
   vp().className = 'viewport';
   const org = activeDevice().isOrganizer;
   if (org && STORE.adminOpen && !STORE.organizerUnlocked) organizerGate();
@@ -2449,24 +2408,156 @@ function render(){
   if (b) b.onclick = () => { STORE.adminOpen = false; render(); };
 }
 
-$('#sim-vote').onclick  = simulateVoters;
-$('#sim-tie').onclick   = forceTie;
-$('#sim-reset').onclick = () => {
-  const wasPractice = M().isPractice;
-  STORE.books = seedBooks(); STORE.currentBookId = CURRENT_ID;
-  STORE.meeting = newMeeting(wasPractice);
-  Object.keys(localPick).forEach(k => delete localPick[k]);
-  Object.keys(localRank).forEach(k => delete localRank[k]);
-  toast('Meeting reset'); render();
-};
-
 (function clock(){
   const t = new Date(); let h = t.getHours();
   $('#clock').textContent = `${h%12||12}:${String(t.getMinutes()).padStart(2,'0')}`;
   setTimeout(clock, 20000);
 })();
 
-render();
+/* ==========================================================================
+   9. SUPABASE — data loading, realtime sync, row <-> app-shape mapping
+   Field names here are the mirror image of mkBook()/newMeeting() above:
+   snake_case columns in, camelCase STORE shape out.
+   ========================================================================== */
+let supa = null;
+
+function bookFromRow(r){
+  return {
+    id: r.id, title: r.title, author: r.author, isbn: r.isbn,
+    coverURL: r.cover_url, coverLarge: r.cover_large, amazon: r.amazon,
+    c1: r.c1, c2: r.c2, glyph: r.glyph || '📖', status: r.status,
+    addedAt: r.added_at, byToken: r.by_token, needsReview: !!r.needs_review,
+    meetingsConsidered: r.meetings_considered ?? 0,
+    zeroVoteStreak: r.zero_vote_streak ?? 0,
+    shortlistMisses: r.shortlist_misses ?? 0,
+    everShortlisted: !!r.ever_shortlisted,
+    archiveReason: r.archive_reason ?? null,
+    archivedAt: r.archived_at ?? null,
+    dateRead: r.date_read ?? null,
+  };
+}
+
+function meetingFromRow(r, ballotRows){
+  const approvalBallots = {}, rankBallots = {};
+  (ballotRows || []).forEach(b => {
+    (b.phase === 'approval' ? approvalBallots : rankBallots)[b.token] = b.book_ids;
+  });
+  return {
+    id: r.id, date: r.date, isPractice: r.is_practice, phase: r.phase,
+    candidateIds: r.candidate_ids || [], approvalBallots, rankBallots,
+    shortlistIds: r.shortlist_ids, cutShort: r.cut_short, tie: null,
+    result: r.result, archiveQueue: r.archive_queue, expectedVoters: r.expected_voters,
+  };
+}
+
+/** auto_date means "follow the second-Thursday rule" — recomputed fresh on
+    every load rather than trusted from the stored column, so it never goes
+    stale between meetings without needing anything to write it back. */
+function clubFromRow(r){
+  return {
+    autoDate: !!r.auto_date,
+    date: r.auto_date ? ymd(nextClubMeeting()) : (r.date || ''),
+    time: r.time || '7:00 PM',
+    host: r.host || '',
+    location: r.location || '',
+    locationNote: r.location_note || '',
+  };
+}
+
+async function loadBallots(meetingId){
+  const { data } = await supa.from('ballots').select('*').eq('meeting_id', meetingId);
+  return data || [];
+}
+
+async function refreshBooks(){
+  const { data } = await supa.from('books').select('*');
+  STORE.books = (data || []).map(bookFromRow);
+}
+
+async function refreshCurrentMeeting(){
+  const { data } = await supa.from('meetings').select('*').eq('is_current', true).limit(1);
+  const row = (data || [])[0];
+  if (!row) return;
+  const ballotRows = await loadBallots(row.id);
+  STORE.meeting = meetingFromRow(row, ballotRows);
+}
+
+/** Every phone subscribes to the same four tables — this is what replaces
+    the old "Phone 1-4" simulator: real devices, kept in sync for real. */
+function subscribeRealtime(){
+  supa.channel('rd-books').on('postgres_changes',
+    { event: '*', schema: 'public', table: 'books' }, payload => {
+      const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+      if (!row) return;
+      const idx = STORE.books.findIndex(b => b.id === row.id);
+      if (payload.eventType === 'DELETE'){ if (idx >= 0) STORE.books.splice(idx, 1); }
+      else {
+        const mapped = bookFromRow(payload.new);
+        if (idx >= 0) STORE.books[idx] = mapped; else STORE.books.push(mapped);
+      }
+      render();
+    }).subscribe();
+
+  supa.channel('rd-club').on('postgres_changes',
+    { event: '*', schema: 'public', table: 'club' }, payload => {
+      const r = payload.new; if (!r) return;
+      STORE.club = clubFromRow(r);
+      STORE.currentBookId = r.current_book_id;
+      render();
+    }).subscribe();
+
+  supa.channel('rd-meetings').on('postgres_changes',
+    { event: '*', schema: 'public', table: 'meetings' }, async payload => {
+      const r = payload.new;
+      if (!r || !r.is_current) return;   // ignore the meeting we just closed out
+      const ballotRows = await loadBallots(r.id);
+      STORE.meeting = meetingFromRow(r, ballotRows);
+      render();
+    }).subscribe();
+
+  supa.channel('rd-ballots').on('postgres_changes',
+    { event: '*', schema: 'public', table: 'ballots' }, payload => {
+      const r = payload.eventType === 'DELETE' ? payload.old : payload.new;
+      if (!r || !M() || r.meeting_id !== M().id) return;
+      const bucket = r.phase === 'approval' ? M().approvalBallots : M().rankBallots;
+      if (payload.eventType === 'DELETE') delete bucket[r.token];
+      else bucket[r.token] = r.book_ids;
+      render();
+    }).subscribe();
+}
+
+async function bootstrap(){
+  vp().innerHTML = `<div class="waiting"><h2>Loading…</h2><p>Fetching the shelf.</p></div>`;
+  try {
+    const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+    supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    await refreshBooks();
+
+    const { data: clubRows } = await supa.from('club').select('*').limit(1);
+    const clubRow = (clubRows || [])[0];
+    if (clubRow){
+      STORE.club = clubFromRow(clubRow);
+      STORE.currentBookId = clubRow.current_book_id;
+    }
+
+    await refreshCurrentMeeting();
+    if (!STORE.meeting){
+      vp().innerHTML = `<div class="waiting"><h2>No meeting yet</h2>
+        <p>Run supabase/seed.sql once against this project to open the first one.</p></div>`;
+      return;
+    }
+
+    subscribeRealtime();
+    render();
+  } catch (e){
+    console.error(e);
+    vp().innerHTML = `<div class="waiting"><h2>Couldn't connect</h2>
+      <p>Check your connection and reload.</p></div>`;
+  }
+}
+
+bootstrap();
 })();
 </script>
 </body>

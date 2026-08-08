@@ -9,20 +9,24 @@ way. Whenever a feature would add meeting time, phone time, or ceremony, the
 answer is usually no.
 
 Live at https://roughdraftsbookclub.github.io/bookclubapp/ (GitHub Pages,
-`main` / root). Currently a **front-end-only preview** — see "What's stubbed".
+`main` / root). Backed by a real Supabase project — votes sync across real
+devices now. See "What's stubbed" for what's still simulated.
 
 ---
 
 ## Current state
 
 `index.html` is the entire app: one self-contained file, no build step, no
-dependencies. The logo is an embedded data URI. The only outbound requests are
-Google Fonts, Open Library (search + jackets), and Amazon links.
+npm dependencies. The logo is an embedded data URI. Outbound requests: Google
+Fonts, Open Library (search + jackets), Amazon links, and Supabase (data +
+realtime), loaded at runtime via `esm.sh` — still no bundler.
 
-All state lives in a single `STORE` object in memory. The four "Phone 1–4"
-buttons at the top are a simulator — they switch which member you're acting as,
-sharing one `STORE`, which is how realtime sync is demonstrated without a
-server.
+`STORE` is now a local cache, not the source of truth — it's populated from
+Supabase on load (`bootstrap()`) and kept current by realtime subscriptions on
+`books`, `club`, `meetings` and `ballots`. Each browser mints one real token
+into `localStorage` on first visit (`MY_TOKEN`) and keeps it — there's no
+longer a "Phone 1–4" switcher standing in for other devices; two real phones
+are just two real browsers now, each with their own token.
 
 ---
 
@@ -102,12 +106,20 @@ tie-break UI, you have broken the design.
 
 There is no separate admin account. The organizer votes on the same ballot as
 everyone else and their ballot counts. A thin strip on top of the normal member
-app opens the console, gated by a short passcode
-(`CONFIG.organizerCode`, currently `4021`).
+app opens the console, gated by a short passcode. The console entry point
+itself just needs a `?organizer` link once (remembered in `localStorage`
+after); nobody stumbles into it from the plain link texted to the group.
 
-**The passcode is currently checked client-side and is therefore a speed bump,
-not security.** Anyone can read it in the page source. Acceptable for nine
-friends; move it server-side when there's a backend.
+**The passcode is checked inside the database now**
+(`check_organizer_code`, `supabase/schema.sql`), not compared in client JS —
+the real code lives only in the `organizer_secret` table, which has no RLS
+policy granting it to anyone, ever. Every organizer-only write (opening a
+phase, publishing results, editing club settings) goes through a
+`security definer` function that re-checks the passcode itself, so a request
+that skips the UI entirely still can't mutate anything without it. Still
+sized for nine friends, not a public API — there's no rate limiting on
+`check_organizer_code`, so it isn't brute-force-hardened, just no longer
+readable in page source.
 
 ### Suggesting a book
 
@@ -176,18 +188,24 @@ every session, ballot and archive action — retrofitting it later is a rewrite.
 
 ## Data model
 
-Field names deliberately mirror the Postgres tables this should become.
+Field names mirror the real Postgres tables now (`supabase/schema.sql`) —
+this is no longer aspirational. `STORE`'s in-memory shape is still
+camelCase; the mapping to/from snake_case columns lives in `bookFromRow` /
+`meetingFromRow` / `clubFromRow` near the bottom of `index.html`.
 
 ```
-book:    id, title, author, isbn, coverURL, coverLarge, amazon,
-         status: active | current | read | archived,
-         addedAt, byToken, needsReview,
-         meetingsConsidered, zeroVoteStreak, shortlistMisses,
-         everShortlisted, archiveReason, archivedAt
-meeting: id, date, isPractice, phase, candidateIds[],
-         approvalBallots{token: [bookId]}, rankBallots{token: [bookId]},
-         shortlistIds[], cutShort, result, archiveQueue, expectedVoters
-club:    autoDate, date, time, host, location, locationNote
+books:    id, title, author, isbn, cover_url, cover_large, amazon,
+          status: active | current | read | archived,
+          added_at, by_token, needs_review,
+          meetings_considered, zero_vote_streak, shortlist_misses,
+          ever_shortlisted, archive_reason, archived_at, date_read
+meetings: id, date, is_practice, phase, is_current, candidate_ids[],
+          shortlist_ids[], cut_short, result, archive_queue, expected_voters
+ballots:  id, meeting_id, token, phase (approval|ranked), book_ids[]
+          — one row per token per phase per meeting, not a JSON blob on the
+          meeting row, so RLS can reason about writes per-row
+club:     auto_date, date, time, host, location, location_note,
+          current_book_id
 ```
 
 `phase`: `lobby → approval → shortlist_review → ranked → results`
@@ -204,22 +222,49 @@ the December rollover. The organizer can override date, time, host and location.
 
 ## What's stubbed — the actual remaining work
 
-**There is no backend.** Every visitor gets a private copy of `STORE`, so votes
-do not sync and the counter always reads 1 of 9. This is the next job.
+**The backend is real and live** (Supabase — schema and RLS in `supabase/`).
+Books, club settings, the meeting, and ballots all read and write through
+`supabase-js`, with realtime subscriptions so every phone sees phase changes
+and vote counts live — no more "1 of 9" stuck forever. `MY_TOKEN` is minted
+once per browser into `localStorage` and is the actual write credential for
+ballots, same trust model as the organizer passcode (see below).
 
-Suggested shape (chosen but not built): **Supabase**, called directly from the
-browser, so GitHub Pages remains a fine permanent host — no server needed.
+Setup, in order, against a fresh project: `supabase/schema.sql`, then
+`supabase/seed.sql`. `supabase/patch_1.sql` and `patch_2.sql` are the
+incremental fixes layered onto the project that was already running before
+`schema.sql` caught up — a fresh project never needs them.
 
-1. Schema from the data model above; carry `is_practice` everywhere
-2. **Row Level Security on from day one.** The anon key ships in the client by
-   design and is safe *only* with RLS. The `service_role` key must never appear
-   in client code
-3. Replace `STORE` reads/writes with Supabase queries
-4. Realtime subscription on the meeting row so phase changes push to every phone
-5. Move the organizer passcode server-side
-6. Split the organizer console onto its own route
-7. Later, non-blocking: feed the public club site's book lists; append a
-   human-readable meeting record to a Google Doc. Neither should be a dependency
+Of the original plan, done: schema + RLS from day one, `STORE` reads/writes
+replaced with Supabase queries, realtime on all four tables, and the
+organizer passcode checked inside a database function
+(`check_organizer_code`) rather than compared in client JS. Still open:
+
+1. **The organizer console is a `?organizer` link, not its own route.** First
+   visit with `?organizer` in the URL remembers it in `localStorage`; the
+   passcode is still the real gate. Splitting it onto a real separate page is
+   unstarted.
+2. **The admin "Books" tab is still entirely fake.** "Import from the club
+   page" returns three hardcoded titles, `fuzzyMatch()` runs against a
+   made-up catalogue rather than Open Library, and confirming a suggestion /
+   archiving / reactivating a book only mutates the in-memory `STORE.books`
+   array — nothing is written to Supabase. Right now these controls show a
+   success toast and then silently lose the change on the next reload or
+   realtime refresh. **Don't use them for real organizing yet** — archive
+   real books by editing the `books` table directly until this is wired.
+3. **Practice mode is disabled**, not wired. The old client-only
+   `newMeeting(true)` swap doesn't make sense against one shared `is_current`
+   meeting row — flipping it locally would either do nothing or, done naively,
+   swap every real member's live ballot out from under them. Needs a real
+   design (a local-only sandbox that never touches `is_current`) before it
+   comes back.
+4. The old "Simulate remaining voters" / "Force a cutoff pile-up" / "Reset
+   meeting" dev buttons are gone — they wrote directly into the single local
+   `STORE`, which doesn't exist anymore now that state lives in a shared
+   database. `tests/shortlist.js` and `tests/archive_sim.js` cover the same
+   ground (the fuzzed scenarios) without touching real data.
+5. Later, non-blocking: feed the public club site's book lists; append a
+   human-readable meeting record to a Google Doc. Neither should be a
+   dependency.
 
 ---
 

@@ -9,7 +9,6 @@ const book=id=>STORE.books.find(b=>b.id===id);
 // Load the page's pure engine into a real scope so its consts survive.
 const code=[
   grab(/const CONFIG = \{[\s\S]*?\r?\n\};/,'CONFIG'),
-  grab(/const SIM_TOKENS = \[[^\]]*\];/,'SIM_TOKENS'),
   grab(/const SEED = \[[\s\S]*?\r?\n\];/,'SEED'),
   grab(/const CURRENT_BOOK = [^\r\n]*/,'CURRENT_BOOK'),
   grab(/const PREVIOUSLY_READ = \[[\s\S]*?\r?\n\];/,'PREVIOUSLY_READ'),
@@ -24,9 +23,9 @@ const code=[
   grab(/function computeShortlist\(\)\{[\s\S]*?\r?\n\}/,'computeShortlist'),
   grab(/function buildArchiveQueue\(\)\{[\s\S]*?\r?\n\}/,'buildArchiveQueue'),
 ].join('\n')+`
-return {CONFIG,SIM_TOKENS,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue};`;
+return {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue};`;
 const A=new Function('STORE','M','book',code)(STORE,M,book);
-const {CONFIG,SIM_TOKENS,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue}=A;
+const {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue}=A;
 STORE.books=seedBooks();
 
 const newMeeting=()=>({id:'mt1',date:'2026-08-08',isPractice:false,phase:'lobby',
