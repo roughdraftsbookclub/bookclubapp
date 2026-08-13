@@ -829,8 +829,12 @@ function secondThursday(y, m){
   return new Date(y, m, 1 + shift + 7);
 }
 function nextClubMeeting(from = new Date()){
+  // Compare by date, not exact timestamp — otherwise the second Thursday
+  // looks "already past" from any time after midnight on the day itself,
+  // including all evening, which is when the meeting is actually happening.
+  const today = new Date(from.getFullYear(), from.getMonth(), from.getDate());
   let d = secondThursday(from.getFullYear(), from.getMonth());
-  if (d < from) d = secondThursday(from.getFullYear(), from.getMonth() + 1);
+  if (d < today) d = secondThursday(from.getFullYear(), from.getMonth() + 1);
   return d;
 }
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
