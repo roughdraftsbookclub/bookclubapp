@@ -1581,9 +1581,17 @@ async function commitSuggestion(title, author, cover, isbn, buy){
 
   // A book added before voting opens joins tonight's ballot. No passcode —
   // suggesting was never organizer-gated (add_candidate_if_lobby, schema.sql).
+  // Awaited and checked — this used to be fire-and-forget, which meant a
+  // failed call (e.g. the browser backgrounded right after tapping Add)
+  // silently left a real suggestion off the ballot with no one the wiser.
   if (M().phase === 'lobby'){
+    const { error: joinError } = await supa.rpc('add_candidate_if_lobby', { p_book_id: row.id });
+    if (joinError){
+      toast(`${title} was added to the shelf, but couldn't join tonight's ballot — tell the organizer`);
+      goto('books');
+      return;
+    }
     M().candidateIds = [...M().candidateIds, row.id];
-    supa.rpc('add_candidate_if_lobby', { p_book_id: row.id });
   }
 
   goto('books');
