@@ -50,6 +50,23 @@ check('T3 first-round majority ends in one round', r.rounds.length===1&&r.winner
 r=runIRV([['A'],['B'],['C']],['A','B','C']);
 check('T4 dead-level field returns without hanging', r.rounds.length<40&&!!r.winner);
 check('T4 reports the tie', r.tied.length===3, 'tied='+JSON.stringify(r.tied));
+check('T4 winner is one of the tied candidates, not an arbitrary pick outside it',
+  r.tied.includes(r.winner), 'winner='+r.winner+' tied='+JSON.stringify(r.tied));
+
+// ---- T4b: a genuine tie for the win, not just a dead-level field --------
+// Two candidates end up level with a majority-equivalent outcome (both
+// eliminated everyone else); the winner must still be picked deterministically
+// (countback) rather than an implementation-detail-dependent arbitrary one,
+// and it must be reported as tied so the results screen can say so.
+const t4b=[['A','B'],['B','A'],['C','A'],['C','B']];
+let winners4b=new Set(), tiedFlag=true;
+for(let i=0;i<300;i++){
+  const rb=runIRV(t4b.map(b=>[...b]),['A','B','C']);
+  winners4b.add(rb.winner);
+  if(!(rb.tied&&rb.tied.length>1)) tiedFlag=false;
+}
+check('T4b winner-tie deterministic across 300 runs', winners4b.size===1, 'got '+[...winners4b]);
+check('T4b winner-tie reported as tied', tiedFlag);
 
 // ---- T5: determinism -- same ballots, same winner ----------------------
 const shuf=a=>a.map(x=>[Math.random(),x]).sort((p,q)=>p[0]-q[0]).map(p=>p[1]);

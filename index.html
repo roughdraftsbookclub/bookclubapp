@@ -866,14 +866,19 @@ function runIRV(ballots, candidateIds){
   const rounds = [];
   let guard = 0;
 
-  /* Break a tie for last place by countback: whoever was weakest in the most
-     recent round where they differed goes first. Deterministic as a last resort
-     so the same ballots always produce the same winner. */
-  const countback = ids => {
+  /* Break a tie by countback: look at the most recent round where the tied
+     books differed. For a tie at the bottom (who gets eliminated) that means
+     whoever was weakest there; for a tie at the top (who actually won) it's
+     the mirror image — whoever was strongest earlier gets it, since that's
+     the book with more sustained support, not less. Either way it's
+     deterministic as a last resort, so the same ballots always produce the
+     same result. */
+  const countback = (ids, pickWeakest = true) => {
     for (let r = rounds.length - 1; r >= 0; r--){
       const t = rounds[r].tally;
-      const lo = Math.min(...ids.map(id => t[id] ?? 0));
-      const still = ids.filter(id => (t[id] ?? 0) === lo);
+      const val = pickWeakest ? Math.min(...ids.map(id => t[id] ?? 0))
+                               : Math.max(...ids.map(id => t[id] ?? 0));
+      const still = ids.filter(id => (t[id] ?? 0) === val);
       if (still.length === 1) return still[0];
       ids = still;
     }
@@ -901,15 +906,23 @@ function runIRV(ballots, candidateIds){
     const top = desc[0][1];
     const leaders = desc.filter(([,v]) => v === top).map(([k]) => k);
 
-    // Majority of still-active ballots, or last one standing
-    if (top >= round.threshold || remaining.size <= 1)
-      return { rounds, winner: desc[0][0], tied: leaders.length > 1 ? leaders : [] };
+    // Majority of still-active ballots, or last one standing. A genuine tie
+    // among the leaders is resolved by countback rather than an arbitrary
+    // pick — same guarantee the rest of IRV already has (same ballots, same
+    // winner, every time) — and means the results screen can say plainly it
+    // was a tie instead of presenting a coin flip as a clean win.
+    if (top >= round.threshold || remaining.size <= 1){
+      const winner = leaders.length > 1 ? countback(leaders, false) : desc[0][0];
+      return { rounds, winner, tied: leaders.length > 1 ? leaders : [] };
+    }
 
     const min = desc[desc.length-1][1];
     const atMin = desc.filter(([,v]) => v === min).map(([k]) => k);
 
-    if (atMin.length === remaining.size)       // dead level — nothing to eliminate
-      return { rounds, winner: desc[0][0], tied: leaders };
+    if (atMin.length === remaining.size){      // dead level — nothing to eliminate
+      const winner = leaders.length > 1 ? countback(leaders, false) : desc[0][0];
+      return { rounds, winner, tied: leaders };
+    }
 
     let out;
     if (atMin.length === 1){
@@ -1852,6 +1865,9 @@ function memberResults(){
         <h2>${w ? esc(w.title) : 'No winner'}</h2>
         <div class="wa">${w ? esc(w.author) : ''}</div>
         <div class="wmeta">Won in ${plural(rounds.length,'round','rounds')} · ${plural(r.rankVoters,'ballot','ballots')} cast</div>
+        ${(r.irv.tied||[]).length > 1 ? `<div class="wmeta">Exact tie for first place — broken by countback
+          (whoever had more support in the most recent round where the tied books differed). Same ballots,
+          same result, every time — nobody had to pick.</div>` : ''}
       </div>
 
       <div class="resultcard">
@@ -2037,6 +2053,8 @@ function adminMeeting(el){
             <span class="at" style="font-size:15px">${w ? esc(w.title) : '—'}</span>
             <div class="aa">${w ? esc(w.author) : ''}</div>
             <div class="aa" style="margin-top:5px">Won in ${plural(m.result.irv.rounds.length,'round','rounds')}</div>
+            ${(m.result.irv.tied||[]).length > 1 ? `<div class="aa" style="margin-top:3px;color:#7A5A16">
+              Exact tie, broken by countback — not a call you had to make.</div>` : ''}
           </span>
         </div>
         <div class="subnote" style="margin-top:11px">Everyone's phone is already showing this.</div>
