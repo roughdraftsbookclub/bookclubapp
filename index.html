@@ -508,15 +508,15 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   color:var(--gold-2); margin-bottom:7px;
 }
 .meetcard .d{
-  font-family:var(--serif); font-size:20px; font-weight:600; color:var(--cream);
+  font-family:var(--serif); font-size:23px; font-weight:600; color:var(--cream);
   line-height:1.2; letter-spacing:-.2px;
 }
 .meetcard .w{
   display:flex; align-items:center; gap:9px; margin-top:8px;
-  font-size:13px; color:#B9C3D2;
+  font-size:15px; color:#B9C3D2;
 }
 .meetcard .w i{ width:3px; height:3px; border-radius:50%; background:#5B6B82; }
-.meetcard .n{ font-size:11.5px; color:#7D8CA3; margin-top:5px; }
+.meetcard .n{ font-size:13px; color:#7D8CA3; margin-top:5px; }
 .meetcard .cd{
   position:absolute; top:14px; right:14px;
   font-size:10.5px; font-weight:700; letter-spacing:.4px;
@@ -531,16 +531,16 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 }
 .nowcard .meta{ flex:1; min-width:0; }
 .nowcard .k{
-  font-size:9.5px; font-weight:700; letter-spacing:1.3px; text-transform:uppercase;
+  font-size:11px; font-weight:700; letter-spacing:1.3px; text-transform:uppercase;
   color:var(--gold); margin-bottom:5px;
 }
-.nowcard .t{ font-family:var(--serif); font-size:17px; font-weight:600;
+.nowcard .t{ font-family:var(--serif); font-size:19.5px; font-weight:600;
   line-height:1.25; color:var(--navy); }
-.nowcard .a{ font-size:12.5px; color:var(--ink-3); margin-top:3px; }
+.nowcard .a{ font-size:14.5px; color:var(--ink-3); margin-top:3px; }
 
 .statusline{
   display:flex; align-items:center; gap:9px; justify-content:center;
-  font-size:12.5px; color:var(--ink-3); padding:14px 6px 4px;
+  font-size:14.5px; color:var(--ink-3); padding:14px 6px 4px;
 }
 .statusline .dot{ width:7px;height:7px;border-radius:50%;background:var(--gold); }
 
@@ -555,8 +555,8 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   background:rgba(14,26,43,.06); color:var(--navy); display:grid; place-items:center;
 }
 .tile .meta{ flex:1; min-width:0; }
-.tile .tt{ font-size:14px; font-weight:600; line-height:1.3; }
-.tile .td{ font-size:11.5px; color:var(--ink-3); margin-top:2px; line-height:1.4; }
+.tile .tt{ font-size:16px; font-weight:600; line-height:1.3; }
+.tile .td{ font-size:13px; color:var(--ink-3); margin-top:2px; line-height:1.4; }
 
 .booklist{ display:flex; flex-direction:column; gap:10px; padding-bottom:6px; }
 .bookcard{
@@ -1465,6 +1465,7 @@ function memberLobby(){
   if (s === 'detail')   return memberBookDetail();
   if (s === 'nominate') return memberNominate();
   if (s === 'schedule') return memberSchedule();
+  if (s === 'previous') return memberPreviousBooks();
   return memberHome();
 }
 
@@ -1475,7 +1476,6 @@ function memberHome(){
   const cur = STORE.currentBookId ? book(STORE.currentBookId) : null;
   const c = STORE.club;
   const days = Math.round((new Date(c.date + 'T00:00:00') - new Date().setHours(0,0,0,0)) / 864e5);
-  const sw = suggestionWindow();
 
   vp().innerHTML = `${practiceBar()}${orgBar()}
     <div class="brandhdr">${logoImg(238)}</div>
@@ -1504,18 +1504,16 @@ function memberHome(){
         <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg></span>
         <span class="meta">
           <span class="tt">Books under consideration</span>
-          <div class="td">${plural(active.length,'book','books')} on the table${mine.length ? ` · ${mine.length} from you` : ''}</div>
+          <div class="td">${plural(active.length,'book','books')} on the table${mine.length ? ` · ${mine.length} from you` : ''} · suggest one too</div>
         </span>
         <span class="chev">${CHEV}</span>
       </button>
 
-      <button class="tile" id="t-nominate">
-        <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+      <button class="tile" id="t-previous">
+        <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/><path d="M8 7h8M8 11h8"/></svg></span>
         <span class="meta">
-          <span class="tt">Suggest a book</span>
-          <div class="td">${sw.open
-            ? 'Add something you\'d like the club to read'
-            : (sw.opensAt ? `Reopens ${formatDeadline(sw.opensAt)}` : 'Closed for now')}</div>
+          <span class="tt">Previously read</span>
+          <div class="td">Every book the club has finished</div>
         </span>
         <span class="chev">${CHEV}</span>
       </button>
@@ -1524,7 +1522,7 @@ function memberHome(){
         <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg></span>
         <span class="meta">
           <span class="tt">Meeting schedule</span>
-          <div class="td">Previously read, and who's hosting next</div>
+          <div class="td">Upcoming meetings, and who's hosting</div>
         </span>
         <span class="chev">${CHEV}</span>
       </button>
@@ -1537,10 +1535,8 @@ function memberHome(){
     </div>`;
 
   $('#t-books').onclick = () => goto('books');
+  $('#t-previous').onclick = () => goto('previous');
   $('#t-schedule').onclick = () => goto('schedule');
-  $('#t-nominate').onclick = () => sw.open
-    ? goto('nominate')
-    : toast(sw.opensAt ? `Suggestions reopen ${formatDeadline(sw.opensAt)}` : 'Suggestions are closed for now');
 }
 
 function memberShelf(){
@@ -1556,6 +1552,10 @@ function memberShelf(){
       <div class="sub">Tap a book to learn more</div>
     </header>
     <div class="body">
+      ${sw.open
+        ? `<button class="btn btn-primary" id="s-nominate" style="width:100%;margin-bottom:6px">Suggest a Book</button>
+           ${sw.closesAt ? `<div class="subnote" style="text-align:center;margin-bottom:16px">Closes ${formatDeadline(sw.closesAt)}</div>` : '<div style="height:16px"></div>'}`
+        : `<div class="lockcard" style="margin-bottom:16px">The list is locked until ${sw.opensAt ? formatDeadline(sw.opensAt) : 'the next meeting'}.</div>`}
       <div class="booklist">
         ${active.map((b,i) => `
           <button class="bookcard" data-id="${b.id}" style="animation-delay:${i*30}ms">
@@ -1568,12 +1568,6 @@ function memberShelf(){
             <span class="chev">${CHEV}</span>
           </button>`).join('')}
       </div>
-    </div>
-    <div class="actionbar">
-      ${sw.open
-        ? `<button class="btn btn-primary" id="s-nominate">Suggest a Book</button>
-           ${sw.closesAt ? `<div class="subnote" style="text-align:center;margin-top:8px">Closes ${formatDeadline(sw.closesAt)}</div>` : ''}`
-        : `<div class="lockcard">The list is locked until ${sw.opensAt ? formatDeadline(sw.opensAt) : 'the next meeting'}.</div>`}
     </div>`;
 
   $('#s-back').onclick = () => goto('home');
@@ -1594,14 +1588,11 @@ function todayInClubTZ(){
 let claimingScheduleId = null;
 
 /** Not to be confused with the `meetings` table — this reads the calendar
-    (`schedule`), not tonight's live vote. Previously read shows the meeting
-    where a book was *discussed*, not when it won (CLAUDE.md's data model —
-    a winner is discussed at the following meeting). */
+    (`schedule`), not tonight's live vote. Upcoming only — previously read
+    books live on their own screen (memberPreviousBooks). */
 function memberSchedule(){
   const today = todayInClubTZ();
   const rows = STORE.schedule;
-  const past = rows.filter(r => r.meetingDate && r.meetingDate < today && r.bookId)
-    .sort((a,b) => b.sortIndex - a.sortIndex);
   const upcoming = rows.filter(r => !r.meetingDate || r.meetingDate >= today)
     .sort((a,b) => a.sortIndex - b.sortIndex);
   const nextId = (upcoming.find(r => r.meetingDate) || {}).id;
@@ -1610,21 +1601,9 @@ function memberSchedule(){
     <header class="appbar">
       <button class="nav-btn" id="sc-back">${BACK}</button>
       <h1>Meeting Schedule</h1>
-      <div class="sub">Previously read, and who's hosting next</div>
+      <div class="sub">Upcoming meetings, and who's hosting</div>
     </header>
     <div class="body">
-      ${past.length ? `<div class="seclabel">Previously read</div>
-        ${past.map(r => {
-          const b = book(r.bookId);
-          if (!b) return '';
-          return `<div class="adminbook">${coverHTML(b)}
-            <span class="meta"><span class="at">${esc(b.title)}</span><div class="aa">${esc(b.author)}</div>
-              <div class="aa" style="margin-top:2px">Discussed ${esc(prettyDate(r.meetingDate))}</div></span>
-            ${r.provenance === 'seed_pick' ? '<span class="tag">before the app</span>' : ''}
-          </div>`;
-        }).join('')}` : ''}
-
-      <div class="seclabel" style="margin-top:${past.length ? '18px' : '0'}">Upcoming meetings</div>
       ${upcoming.map(r => {
         const isNext = r.id === nextId;
         if (!r.meetingDate){
@@ -1663,6 +1642,34 @@ function memberSchedule(){
     toast(`Thanks for hosting!`);
     memberSchedule();
   });
+}
+
+/** Books the club has actually discussed, newest first — split out of
+    memberSchedule so "Meeting schedule" is upcoming-only. */
+function memberPreviousBooks(){
+  const today = todayInClubTZ();
+  const past = STORE.schedule.filter(r => r.meetingDate && r.meetingDate < today && r.bookId)
+    .sort((a,b) => b.sortIndex - a.sortIndex);
+
+  vp().innerHTML = `${practiceBar()}${orgBar()}
+    <header class="appbar">
+      <button class="nav-btn" id="pb-back">${BACK}</button>
+      <h1>Previously Read</h1>
+      <div class="sub">${plural(past.length,'book','books')} the club has finished</div>
+    </header>
+    <div class="body">
+      ${past.length ? past.map(r => {
+        const b = book(r.bookId);
+        if (!b) return '';
+        return `<div class="adminbook">${coverHTML(b)}
+          <span class="meta"><span class="at">${esc(b.title)}</span><div class="aa">${esc(b.author)}</div>
+            <div class="aa" style="margin-top:2px">Discussed ${esc(prettyDate(r.meetingDate))}</div></span>
+          ${r.provenance === 'seed_pick' ? '<span class="tag">before the app</span>' : ''}
+        </div>`;
+      }).join('') : `<div class="lockcard">Nothing yet — check back after the first meeting.</div>`}
+    </div>`;
+
+  $('#pb-back').onclick = () => goto('home');
 }
 
 function memberBookDetail(){
@@ -1731,7 +1738,7 @@ function memberNominate(){
   const t = $('#n-t'), a = $('#n-a'), go = $('#n-go');
   const check = () => go.disabled = !t.value.trim();
   t.oninput = () => { $('#f-t').classList.remove('invalid'); check(); };
-  $('#n-close').onclick = () => goto('home');
+  $('#n-close').onclick = () => goto('books');
 
   go.onclick = async () => {
     if (!t.value.trim()){ $('#f-t').classList.add('invalid'); return; }

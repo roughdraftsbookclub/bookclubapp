@@ -260,12 +260,14 @@ schedule: id, sort_index, meeting_date, skip_reason, host, book_id,
           December) has no date to sort by. `publish_results` auto-attaches
           a winner to the earliest still-undecided row — a book is discussed
           at the *next* meeting, not the one that picked it. Member-facing
-          in `memberSchedule()` ("Meeting schedule" home tile): previously
-          read (past rows with a `book_id`, most recent first, tagged
-          "before the app" when `provenance = seed_pick`) and upcoming
-          meetings, where an empty `host` slot is claimable by anyone
-          (`claim_host_slot`, no passcode — same low-stakes pattern as
-          suggesting a book) but a filled one isn't editable in-app.
+          across two home tiles: "Meeting schedule" (`memberSchedule()`) is
+          upcoming rows only, where an empty `host` slot is claimable by
+          anyone (`claim_host_slot`, no passcode — same low-stakes pattern
+          as suggesting a book) but a filled one isn't editable in-app;
+          "Previously read" (`memberPreviousBooks()`) is past rows with a
+          `book_id`, most recent first, tagged "before the app" when
+          `provenance = seed_pick`. Split into separate screens so the
+          schedule tile leads to meetings only, not a mixed list.
 ```
 
 `phase`: `lobby → approval → shortlist_review → ranked → results`
