@@ -397,6 +397,20 @@ input,textarea{font:inherit;color:inherit}
 }
 .iconbtn:hover{color:var(--navy);border-color:var(--navy)}
 
+/* Attendance stepper — bigger targets than .iconbtn on purpose; used
+   standing up, in a living room, with people waiting. */
+.stepperrow{ display:flex; align-items:center; gap:16px; }
+.stepbtn{
+  flex:0 0 auto; width:46px; height:46px; border-radius:var(--r-md);
+  background:var(--navy); color:#fff; font-size:24px; font-weight:700;
+  display:grid; place-items:center; border:none; line-height:1;
+}
+.stepbtn:disabled{ opacity:.32; }
+.stepperval{
+  flex:1 1 auto; text-align:center; font-family:var(--serif);
+  font-size:34px; font-weight:700; color:var(--ink);
+}
+
 .control{
   width:100%; background:#FBFAF8; border:1px solid var(--hair); border-radius:var(--r-sm);
   padding:11px 12px; font-size:14px; outline:none;
@@ -2145,7 +2159,20 @@ function adminMeeting(el){
   }
 
   const c = STORE.club;
+  const attWarn = voted > m.expectedVoters
+    ? `<div class="subnote" style="margin-top:8px;color:#7A5A16">
+         ${voted} ballots cast — more than the ${m.expectedVoters} you set. Worth a quick check.</div>` : '';
   el.innerHTML = ctrl + `
+    <div class="panel">
+      <h3>Members present tonight</h3>
+      <div class="stepperrow">
+        <button class="stepbtn" id="att-minus" ${m.expectedVoters <= 1 ? 'disabled' : ''}>−</button>
+        <span class="stepperval">${m.expectedVoters}</span>
+        <button class="stepbtn" id="att-plus" ${m.expectedVoters >= 30 ? 'disabled' : ''}>+</button>
+      </div>
+      <div class="subnote" style="margin-top:8px">Drives the "of ${m.expectedVoters}" count everyone sees. Change it any time, including mid-vote.</div>
+      ${attWarn}
+    </div>
     <div class="panel">
       <h3>Next meeting — what members see</h3>
       <div class="switch" style="margin-bottom:14px">
@@ -2183,6 +2210,16 @@ function adminMeeting(el){
   on('#a-start2', startRanked);
   on('#a-close2', closeRanked);
   on('#a-publish', publishResults);
+  const setAttendance = async n => {
+    const prev = m.expectedVoters;
+    m.expectedVoters = n; renderAdmin();      // optimistic — corrected below on failure
+    const { error } = await supa.rpc('set_expected_voters', {
+      p_code: STORE.organizerCode, p_meeting_id: m.id, p_count: n,
+    });
+    if (error){ m.expectedVoters = prev; toast('Could not update — try again'); renderAdmin(); }
+  };
+  on('#att-minus', () => { if (m.expectedVoters > 1) setAttendance(m.expectedVoters - 1); });
+  on('#att-plus',  () => { if (m.expectedVoters < 30) setAttendance(m.expectedVoters + 1); });
   on('#a-copy', () => {
     const url = 'https://' + $('#a-link').textContent.trim();
     if (navigator.clipboard) navigator.clipboard.writeText(url);

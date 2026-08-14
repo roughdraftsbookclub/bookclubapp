@@ -295,8 +295,8 @@ begin
   if v_meeting.is_practice then
     -- Practice runs discard everything (CLAUDE.md) — just open the next
     -- real meeting with the shelf as it stands.
-    insert into meetings (candidate_ids)
-      select array_agg(id) from books where status = 'active';
+    insert into meetings (candidate_ids, expected_voters)
+      select array_agg(id), v_meeting.expected_voters from books where status = 'active';
     return;
   end if;
 
@@ -336,8 +336,10 @@ begin
       order by sort_index asc limit 1
    );
 
-  insert into meetings (candidate_ids)
-    select array_agg(id) from books where status = 'active';
+  -- Next meeting's headcount starts as a copy of this one's — the common
+  -- case is confirming it's still right, not entering it from scratch.
+  insert into meetings (candidate_ids, expected_voters)
+    select array_agg(id), v_meeting.expected_voters from books where status = 'active';
 end;
 $$;
 grant execute on function publish_results(text, uuid, text, jsonb, jsonb) to anon;
@@ -457,6 +459,29 @@ begin
 end;
 $$;
 grant execute on function update_schedule_row(text, uuid, date, text, text, text, text) to anon;
+
+-- Attendance drives the "X of N voted" display only — nothing is gated by
+-- it. Editable any time, including mid-vote, since people arrive late; the
+-- existing realtime subscription on `meetings` is what makes a change here
+-- push to every phone live, same as a vote count already does.
+create or replace function set_expected_voters(p_code text, p_meeting_id uuid, p_count integer)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not check_organizer_code(p_code) then
+    raise exception 'wrong organizer code';
+  end if;
+  if p_count < 1 or p_count > 30 then
+    raise exception 'expected_voters out of range';
+  end if;
+
+  update meetings set expected_voters = p_count where id = p_meeting_id and is_current;
+end;
+$$;
+grant execute on function set_expected_voters(text, uuid, integer) to anon;
 
 
 -- ============================================================================
