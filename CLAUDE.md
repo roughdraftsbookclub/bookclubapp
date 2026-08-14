@@ -217,6 +217,14 @@ ballots:  id, meeting_id, token, phase (approval|ranked), book_ids[]
           meeting row, so RLS can reason about writes per-row
 club:     auto_date, date, time, host, location, location_note,
           current_book_id
+schedule: id, sort_index, meeting_date, skip_reason, host, book_id,
+          provenance (voted | seed_pick)
+          — one row per meeting, past or future; not to be confused with
+          `meetings` (live voting state for whichever one is happening now).
+          `sort_index` orders rows explicitly since a skipped month (like
+          December) has no date to sort by. `publish_results` auto-attaches
+          a winner to the earliest still-undecided row — a book is discussed
+          at the *next* meeting, not the one that picked it.
 ```
 
 `phase`: `lobby → approval → shortlist_review → ranked → results`

@@ -324,6 +324,18 @@ begin
   update books set status = 'current' where id = p_winner_id;
   update club set current_book_id = p_winner_id where id = true;
 
+  -- A winner is discussed at the *next* meeting, not this one — attach it
+  -- to the earliest still-undecided schedule row. Silently a no-op if the
+  -- schedule hasn't been seeded that far ahead yet; publishing a result
+  -- should never fail just because nobody's planned next spring.
+  update schedule
+     set book_id = p_winner_id, provenance = 'voted'
+   where id = (
+     select id from schedule
+      where book_id is null and meeting_date is not null
+      order by sort_index asc limit 1
+   );
+
   insert into meetings (candidate_ids)
     select array_agg(id) from books where status = 'active';
 end;
@@ -366,9 +378,91 @@ grant execute on function update_club_settings(text, boolean, date, text, text, 
 
 
 -- ============================================================================
+-- 8. SCHEDULE
+-- One row per meeting, past or future — not to be confused with `meetings`,
+-- which is live voting state for whichever meeting is happening right now.
+-- This is calendar/planning: who's hosting, which book gets discussed there,
+-- and where that book came from (a real vote, or a seed pick from before the
+-- app existed — City of Thieves has no vote behind it at all).
+--
+-- Rows are seeded directly, not computed from the second-Thursday rule —
+-- the rule still holds most months, but every row needs to exist anyway to
+-- hang a host and a book off, and a skipped month (December) has to be an
+-- exception regardless. Rows are cheaper than a rule plus an override table.
+-- `sort_index` orders rows explicitly rather than by `meeting_date`, since a
+-- skipped month has no date at all.
+-- ============================================================================
+create table schedule (
+  id            uuid primary key default gen_random_uuid(),
+  sort_index    integer not null unique,
+  meeting_date  date,                      -- null only for a skipped month
+  skip_reason   text,                      -- set only when meeting_date is null
+  host          text,                      -- null = open slot, claimable by anyone
+  book_id       text references books(id), -- book discussed at this meeting; null until known
+  provenance    text check (provenance in ('voted','seed_pick')),
+  created_at    timestamptz not null default now()
+);
+
+alter table schedule enable row level security;
+
+create policy "anyone can read the schedule"
+  on schedule for select
+  using (true);
+
+-- Claiming an empty slot is exactly as low-stakes as suggesting a book —
+-- no passcode, just a guard that you can't overwrite someone already there.
+create or replace function claim_host_slot(p_schedule_id uuid, p_host text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update schedule
+     set host = p_host
+   where id = p_schedule_id and host is null;
+end;
+$$;
+grant execute on function claim_host_slot(uuid, text) to anon;
+
+-- Everything else about the schedule — reassigning a host, fixing a date,
+-- correcting which book landed where — is an organizer correction, same
+-- passcode-gated pattern as every other organizer action.
+create or replace function update_schedule_row(
+  p_code         text,
+  p_schedule_id  uuid,
+  p_meeting_date date,
+  p_skip_reason  text,
+  p_host         text,
+  p_book_id      text,
+  p_provenance   text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not check_organizer_code(p_code) then
+    raise exception 'wrong organizer code';
+  end if;
+
+  update schedule set
+    meeting_date = p_meeting_date,
+    skip_reason  = p_skip_reason,
+    host         = p_host,
+    book_id      = p_book_id,
+    provenance   = p_provenance
+  where id = p_schedule_id;
+end;
+$$;
+grant execute on function update_schedule_row(text, uuid, date, text, text, text, text) to anon;
+
+
+-- ============================================================================
 -- 7. REALTIME
 -- Turns on broadcasting for the tables the client subscribes to. RLS still
 -- governs what any given connection actually receives — this only flips
 -- broadcasting on at all.
 -- ============================================================================
-alter publication supabase_realtime add table books, club, meetings, ballots;
+alter publication supabase_realtime add table books, club, meetings, ballots, schedule;
