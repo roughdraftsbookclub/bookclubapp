@@ -137,17 +137,41 @@ readable in page source.
 Title is the only required field. Author is optional. There is **no "why do you
 recommend it"** field — deliberately removed.
 
-The flow is three screens and **nothing is ever written to the shelf without the
-member seeing it**:
+The flow is three or four screens and **nothing is ever written to the shelf
+without the member seeing it**:
 
-1. Type a title → search Open Library
-2. Pick from up to 5 matches (jacket, author, year, page count)
+1. Type a title → search Open Library for the *work* (up to 5 matches — jacket, author, year, page count)
+2. **If there are 2+ plausible editions of the picked work**, choose one (cover, publisher, year, page count). Skipped entirely when there's only one good candidate.
 3. Confirm — large jacket, ISBN, and a *Check on Amazon* link — then add
+4. Every failure mode also lands on a screen: nothing matched, or the search
+   couldn't run, each with an explicit "add without a cover" choice. An earlier
+   version silently added the book as typed when lookup failed, which read as
+   the app ignoring the user.
 
-Every failure mode also lands on a screen: nothing matched, or the search
-couldn't run, each with an explicit "add without a cover" choice. An earlier
-version silently added the book as typed when lookup failed, which read as the
-app ignoring the user.
+**Resolved: "bad Amazon links" were never a link-generation bug — the search
+endpoint resolved to the wrong edition.** `search.json` returns *work*-level
+data — `isbn`/`cover_i` are aggregated across every edition ever catalogued,
+so picking "an" ISBN out of that array was closer to random than a real
+choice. `fetchEditionCandidates()` fetches the work's real `editions.json`
+and filters hard: English, a cover, an ISBN, a page count that isn't an
+abridged-reader artifact (a real 1-page "edition" exists in Open Library's
+data), *and* every significant word of the original title present in the
+edition's title — needed because language tagging is inconsistent enough
+that a real Italian *East of Eden* edition carries no `languages` field at
+all and would otherwise pass the language check by default. Verified live
+against real Open Library data, including that exact case (`tests/lookup.js`).
+
+ISBN handling: stores ISBN-10 **and** ISBN-13. Amazon's `/dp/` needs a
+10 — for a `978`-prefixed ISBN-13 with no ISBN-10 on file, `isbn13to10()`
+converts it (drop `978`, recompute the ISBN-10 check digit; verified against
+three real published ISBN pairs). `979`-prefixed or no ISBN at all falls
+back to an Amazon search — never a bare, non-functional title string.
+
+`description` (work-level, cached at suggestion time, never re-fetched on
+render), `page_count` and `first_publish_year` are stored on the book record
+now too, feeding the eventual detail page — `first_publish_year` always
+comes from the *work* (the original publication), not whichever edition was
+picked, so a 2001 reprint of a 1952 novel still shows 1952.
 
 **Resolved: suggestions lock on a calendar schedule, not when Phase One
 opens.** The window closes 11:59pm the Sunday before the next meeting and
@@ -215,11 +239,12 @@ camelCase; the mapping to/from snake_case columns lives in `bookFromRow` /
 `meetingFromRow` / `clubFromRow` near the bottom of `index.html`.
 
 ```
-books:    id, title, author, isbn, cover_url, cover_large, amazon,
+books:    id, title, author, isbn, isbn13, cover_url, cover_large, amazon,
           status: active | current | read | archived,
           added_at, by_token, needs_review,
           meetings_considered, zero_vote_streak, shortlist_misses,
-          ever_shortlisted, archive_reason, archived_at, date_read
+          ever_shortlisted, archive_reason, archived_at, date_read,
+          description, page_count, first_publish_year
 meetings: id, date, is_practice, phase, is_current, candidate_ids[],
           shortlist_ids[], cut_short, result, archive_queue, expected_voters
 ballots:  id, meeting_id, token, phase (approval|ranked), book_ids[]
@@ -319,13 +344,15 @@ regex and run them headlessly — no build, no test framework.
 node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 10 — tally, archiving, end-to-end meeting
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
-node tests/lookup.js     # 12 — Open Library parsing and failure modes
+node tests/lookup.js     # 38 — Open Library parsing/failure modes, edition
+                          #      filtering, ISBN-13->10 conversion
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
 ```
 
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
-`lookupBook`, or `suggestionWindowState`, run these. The regexes in the
+`lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
+`buildAmazonLink`, or `suggestionWindowState`, run these. The regexes in the
 harnesses are brittle by design — if extraction fails they throw loudly
 rather than silently testing nothing.
 
@@ -343,7 +370,12 @@ rather than silently testing nothing.
 - **Open Library jackets take ~750ms** and redirect to archive.org. They load,
   they're just slow — don't mistake a slow paint for a broken URL.
 - **Amazon `/dp/` needs an ISBN-10.** A 13-digit ISBN 404s. The lookup picks a
-  10 where available and falls back to an Amazon search otherwise.
+  10 where available (direct or converted from a `978` ISBN-13) and falls
+  back to an Amazon search otherwise.
+- **Cover lookups: always `cover_i`/edition cover ID, never ISBN.** ISBN-based
+  cover requests are rate-limited to 100/5min per IP; cover-ID requests
+  aren't. Fine for the one-time seed shelf (`SEED`'s `isbn/...` paths), but
+  live per-suggestion lookups (`fetchEditionCandidates`) always use `id/...`.
 - Uploading from Windows can mangle filenames (`index ~1.html`). Check the name
   after every upload.
 - **Any Supabase write from the client needs its error checked, not fired and

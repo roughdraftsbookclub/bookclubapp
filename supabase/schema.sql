@@ -20,7 +20,8 @@ create table books (
   id                  text primary key,                 -- 'bk' + short id, matches uid('bk')
   title               text not null,
   author              text,
-  isbn                text,
+  isbn                text,                              -- ISBN-10, the one Amazon /dp/ needs
+  isbn13              text,
   cover_url           text,
   cover_large         text,
   amazon              text,                              -- direct /dp/ link or a search fallback
@@ -37,7 +38,10 @@ create table books (
   ever_shortlisted    boolean not null default false,
   archive_reason      text,
   archived_at         date,
-  date_read           text                                -- "July 2026" style label, not a real date
+  date_read           text,                               -- "July 2026" style label, not a real date
+  description         text,                               -- from the Open Library work, cached at suggestion time
+  page_count          integer,                            -- from the chosen edition; never re-fetched on render
+  first_publish_year  integer                              -- original publication, not the picked edition's
 );
 
 -- Suggestions lock the moment Phase One opens (CLAUDE.md), so the app reads
@@ -507,15 +511,21 @@ grant execute on function confirm_book(text, text) to anon;
 
 -- Full metadata correction. Editing implies review, so this also clears
 -- needs_review — an organizer fixing a title has, by definition, checked it.
+drop function if exists update_book(text, text, text, text, text, text, text, text);
+
 create or replace function update_book(
-  p_code        text,
-  p_book_id     text,
-  p_title       text,
-  p_author      text,
-  p_isbn        text,
-  p_cover_url   text,
-  p_cover_large text,
-  p_amazon      text
+  p_code               text,
+  p_book_id            text,
+  p_title              text,
+  p_author             text,
+  p_isbn               text,
+  p_isbn13             text,
+  p_cover_url          text,
+  p_cover_large        text,
+  p_amazon             text,
+  p_description        text,
+  p_page_count         integer,
+  p_first_publish_year integer
 )
 returns void
 language plpgsql
@@ -527,13 +537,14 @@ begin
     raise exception 'wrong organizer code';
   end if;
   update books set
-    title = p_title, author = p_author, isbn = p_isbn,
+    title = p_title, author = p_author, isbn = p_isbn, isbn13 = p_isbn13,
     cover_url = p_cover_url, cover_large = p_cover_large, amazon = p_amazon,
+    description = p_description, page_count = p_page_count, first_publish_year = p_first_publish_year,
     needs_review = false
   where id = p_book_id;
 end;
 $$;
-grant execute on function update_book(text, text, text, text, text, text, text, text) to anon;
+grant execute on function update_book(text, text, text, text, text, text, text, text, text, text, integer, integer) to anon;
 
 -- Only ever flips between active and archived — current/read status changes
 -- happen through publish_results, not here, so this can't be used to yank

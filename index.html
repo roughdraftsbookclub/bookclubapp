@@ -799,6 +799,35 @@ const amazonURL = isbn => `https://www.amazon.com/dp/${isbn}`;
 const amazonSearch = (title, author) =>
   'https://www.amazon.com/s?k=' + encodeURIComponent([title, author].filter(Boolean).join(' '));
 
+/* A 978-prefixed ISBN-13 and an ISBN-10 share the same 9 identifying digits —
+   only the check digit differs, and it's computed differently (mod 11, not
+   mod 10). 979-prefixed ISBN-13s have no ISBN-10 equivalent at all; there's
+   nothing to convert. Verified against three real published ISBN-10/13 pairs. */
+function isbn13to10(isbn13){
+  if (!isbn13 || !/^978\d{9}[\dXx]$/.test(isbn13)) return null;
+  const core = isbn13.slice(3, 12);
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += (10 - i) * Number(core[i]);
+  const check = (11 - (sum % 11)) % 11;
+  return core + (check === 10 ? 'X' : String(check));
+}
+
+/* Amazon's /dp/ only resolves an ISBN-10 (it IS the ASIN for print books —
+   Kindle editions carry their own, unrelated ASINs). Try direct, then a
+   converted ISBN-13, then fall back to a real search URL — never a bare
+   title string, which isn't a working link at all. */
+function buildAmazonLink(isbn10, isbn13, title, author){
+  if (isbn10) return amazonURL(isbn10);
+  const converted = isbn13to10(isbn13);
+  if (converted) return amazonURL(converted);
+  return amazonSearch(title, author);
+}
+
+/* Required by Open Library's API etiquette — a generic UA gets rate-limited
+   more aggressively. No personal contact info in client-side source that
+   ships to every visitor. */
+const OL_HEADERS = { 'User-Agent': 'RoughDraftsBookClub/1.0 (+https://github.com/roughdraftsbookclub/bookclubapp)' };
+
 /* A drawn cover is only ever a fallback for a book with no jacket. */
 const FALLBACK = [['#1E3A5F','#0A1626'],['#8C3B2E','#3E1610'],['#2E5B44','#173226'],
                   ['#4A3C72','#221B3A'],['#245E6B','#0C2C33'],['#96591F','#4A2A0C']];
@@ -1203,13 +1232,13 @@ function coverHTML(b, size=''){
 async function lookupBook(title, author){
   const q = (author ? `${title} ${author}` : title).trim();
   const url = 'https://openlibrary.org/search.json?q=' + encodeURIComponent(q)
-            + '&limit=12&fields=title,author_name,first_publish_year,cover_i,isbn,number_of_pages_median';
+            + '&limit=12&fields=key,title,author_name,first_publish_year,cover_i,isbn,number_of_pages_median';
 
   let data;
   try {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 9000);
-    const r = await fetch(url, { signal: ac.signal }).finally(() => clearTimeout(timer));
+    const r = await fetch(url, { signal: ac.signal, headers: OL_HEADERS }).finally(() => clearTimeout(timer));
     if (!r.ok) return null;                 // 4xx/5xx — say so, don't claim "no match"
     data = await r.json();
     if (data.error) return null;
@@ -1224,9 +1253,13 @@ async function lookupBook(title, author){
     .filter(d => d.title && d.cover_i)
     .map(d => {
       const isbns = d.isbn || [];
-      // Amazon /dp/ takes an ISBN-10; a 13 won't resolve.
+      // Amazon /dp/ takes an ISBN-10; a 13 won't resolve. This is only a
+      // fallback now — the real pick happens per-edition once a specific
+      // book is chosen (fetchEditionCandidates), since this array is every
+      // ISBN across every edition of the work, not any one coherent edition.
       const isbn10 = isbns.find(x => x.length === 10 && /^[0-9Xx]+$/.test(x)) || '';
       return {
+        workKey: d.key || null,             // '/works/OL...W' — feeds the edition/description fetch
         title:  d.title,
         author: (d.author_name || []).join(', '),
         year:   d.first_publish_year ? String(d.first_publish_year) : '',
@@ -1243,6 +1276,85 @@ async function lookupBook(title, author){
     });
 
   return hits.slice(0,5);                   // [] means searched, nothing matched
+}
+
+/**
+ * A work's editions span every language, translation, study guide and
+ * graded reader ever catalogued — unsorted, and often missing a cover or
+ * ISBN entirely. This is the actual fix for "bad Amazon links": the old
+ * code picked an arbitrary ISBN out of the search result's aggregated
+ * (every-edition) array. This fetches the real per-edition data and keeps
+ * only plausible candidates: a cover, an ISBN, a page count that isn't an
+ * abridged-reader artifact (a 1-page "edition" is real data Open Library
+ * returns, not a hypothetical) — and English, checked two ways, because the
+ * `languages` field is often just missing rather than absent-because-English:
+ * a real Italian "East of Eden" edition in the wild carries no `languages`
+ * tag at all, so language alone would have let it through. Requiring every
+ * significant word of the original title to also appear in the edition's
+ * title catches what the language check misses.
+ */
+async function fetchEditionCandidates(workKey, workTitle){
+  if (!workKey) return [];
+  const titleTokens = (workTitle || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+    .split(' ').filter(w => w.length > 2);
+  const titleLikelyMatches = editionTitle => {
+    if (!titleTokens.length) return true;
+    const have = new Set((editionTitle || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' '));
+    return titleTokens.every(t => have.has(t));
+  };
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 9000);
+    const r = await fetch(`https://openlibrary.org${workKey}/editions.json?limit=50`,
+      { signal: ac.signal, headers: OL_HEADERS }).finally(() => clearTimeout(timer));
+    if (!r.ok) return [];
+    const data = await r.json();
+    const seen = new Set();
+    return (data.entries || [])
+      .map(e => {
+        const isbn10 = (e.isbn_10 || [])[0] || null;
+        const isbn13 = (e.isbn_13 || [])[0] || null;
+        const coverId = (e.covers || []).find(c => c > 0) || null;
+        const isEnglish = !e.languages || e.languages.some(l => l.key === '/languages/eng');
+        return {
+          publisher: (e.publishers || [])[0] || '',
+          year: (e.publish_date || '').match(/\d{4}/)?.[0] || '',
+          pages: e.number_of_pages || null,
+          isbn10, isbn13,
+          cover: coverId ? olCover(`id/${coverId}`) : '',
+          plausible: isEnglish && titleLikelyMatches(e.title) && !!coverId
+                     && (isbn10 || isbn13) && (!e.number_of_pages || e.number_of_pages >= 40),
+        };
+      })
+      .filter(e => e.plausible)
+      .filter(e => {                          // de-dupe same publisher+year+pages
+        const k = `${e.publisher}|${e.year}|${e.pages}`;
+        return seen.has(k) ? false : (seen.add(k), true);
+      })
+      .sort((a,b) => (b.year||'0') - (a.year||'0'))   // prefer the more recent, more common print
+      .slice(0, 4);
+  } catch (e){
+    return [];                                // never blocks the flow — falls back to work-level data
+  }
+}
+
+/** Description lives on the work, not any edition, and comes back as either
+    a plain string or {type, value} — verified live, both shapes occur. */
+async function fetchWorkDescription(workKey){
+  if (!workKey) return null;
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 9000);
+    const r = await fetch(`https://openlibrary.org${workKey}.json`,
+      { signal: ac.signal, headers: OL_HEADERS }).finally(() => clearTimeout(timer));
+    if (!r.ok) return null;
+    const data = await r.json();
+    const d = data.description;
+    if (!d) return null;
+    return typeof d === 'string' ? d : (d.value || null);
+  } catch (e){
+    return null;
+  }
 }
 
 /* ==========================================================================
@@ -1551,7 +1663,7 @@ function memberNoMatch(title, author, offline){
       <button class="btn btn-ghost" id="z-raw">Add without a cover</button>
     </div>`;
   $('#z-back').onclick = $('#z-retry').onclick = () => goto('nominate');
-  $('#z-raw').onclick = () => commitSuggestion(title, author, '', '');
+  $('#z-raw').onclick = () => commitSuggestion({ title, author });
 }
 
 /** Step two: the member confirms which book they meant. */
@@ -1585,9 +1697,81 @@ function memberPickMatch(rawTitle, rawAuthor, hits){
     </div>`;
 
   $('#p-back').onclick = () => goto('nominate');
-  $('#p-raw').onclick = () => commitSuggestion(rawTitle, rawAuthor, '', '');
-  $$('.matchcard').forEach(el => el.onclick = () =>
-    memberConfirmBook(hits[+el.dataset.i], rawTitle, rawAuthor, hits));
+  $('#p-raw').onclick = () => commitSuggestion({ title: rawTitle, author: rawAuthor });
+  $$('.matchcard').forEach(el => el.onclick = () => resolveEdition(hits[+el.dataset.i], rawTitle, rawAuthor, hits));
+}
+
+/** Brief transitional screen while the edition/description fetch runs —
+    never blocks longer than the 9s timeout on each of those two calls. */
+function memberCheckingEdition(){
+  vp().innerHTML = `${practiceBar()}${orgBar()}
+    <div class="waiting">
+      <div class="seal"><span class="spin"></span></div>
+      <h2>Checking the edition…</h2>
+      <p>Getting the right cover, page count and link.</p>
+    </div>`;
+}
+
+/** Fetches the real per-edition data for one picked work, then routes to the
+    edition picker (2+ good candidates) or straight to confirm (0 or 1). */
+async function resolveEdition(hit, rawTitle, rawAuthor, hits){
+  memberCheckingEdition();
+  const [editions, description] = await Promise.all([
+    fetchEditionCandidates(hit.workKey, hit.title),
+    fetchWorkDescription(hit.workKey),
+  ]);
+  if (editions.length >= 2) return memberPickEdition(hit, editions, description, rawTitle, rawAuthor, hits);
+  return memberConfirmBook(mergeEditionIntoHit(hit, editions[0] || null, description), rawTitle, rawAuthor, hits);
+}
+
+/** Combines the work-level pick with a chosen (or absent) specific edition.
+    Title/author/year always come from the work — an edition can be a
+    translation with a different title, which is never what belongs on the
+    shelf. Falls back to the work-level cover/isbn/pages when no edition was
+    pinned, same data the app already showed before this existed. */
+function mergeEditionIntoHit(hit, edition, description){
+  const isbn10 = edition?.isbn10 || hit.isbn || '';
+  const isbn13 = edition?.isbn13 || '';
+  const cover  = edition?.cover || hit.cover || '';
+  const pages  = edition?.pages || hit.pages || null;
+  return {
+    title: hit.title, author: hit.author, year: hit.year,
+    isbn: isbn10, isbn13, cover, pages, description,
+    buy: buildAmazonLink(isbn10, isbn13, hit.title, hit.author),
+  };
+}
+
+/** Only shown when there are genuinely 2+ plausible editions to choose
+    between — one clear edition skips straight to confirm. */
+function memberPickEdition(hit, editions, description, rawTitle, rawAuthor, hits){
+  vp().innerHTML = `${practiceBar()}${orgBar()}
+    <header class="appbar">
+      <button class="nav-btn" id="e-back">${BACK}</button>
+      <h1>Which edition?</h1>
+      <div class="sub">Same book — this gets the page count and link right</div>
+    </header>
+    <div class="body">
+      ${editions.map((e,i) => `
+        <button class="matchcard" data-i="${i}">
+          ${e.cover
+            ? `<img class="mc" src="${esc(e.cover)}" alt="" loading="lazy">`
+            : `<span class="mc none">no<br>cover</span>`}
+          <span class="meta">
+            <span class="mt">${esc(e.publisher || hit.title)}</span>
+            <div class="my">${[e.year, e.pages ? e.pages + ' pages' : ''].filter(Boolean).join(' · ')}</div>
+          </span>
+          <span class="chev">${CHEV}</span>
+        </button>`).join('')}
+      <div class="helpnote" style="margin-top:4px">Not sure? Skip this — the organizer can fix it before the meeting.</div>
+    </div>
+    <div class="actionbar">
+      <button class="btn btn-outline btn-sm" id="e-skip">None of these / not sure</button>
+    </div>`;
+
+  const toConfirm = edition => memberConfirmBook(mergeEditionIntoHit(hit, edition, description), rawTitle, rawAuthor, hits);
+  $('#e-back').onclick = () => memberPickMatch(rawTitle, rawAuthor, hits);
+  $('#e-skip').onclick = () => toConfirm(null);
+  $$('.matchcard').forEach(el => el.onclick = () => toConfirm(editions[+el.dataset.i]));
 }
 
 /**
@@ -1637,11 +1821,14 @@ function memberConfirmBook(h, rawTitle, rawAuthor, hits){
   const back = () => memberPickMatch(rawTitle, rawAuthor, hits);
   $('#k-back').onclick = back;
   $('#k-no').onclick = back;
-  $('#k-go').onclick = () => commitSuggestion(h.title, h.author, h.cover, h.isbn, h.buy);
+  $('#k-go').onclick = () => commitSuggestion({
+    title: h.title, author: h.author, cover: h.cover, isbn: h.isbn, isbn13: h.isbn13,
+    buy, description: h.description, pages: h.pages, year: h.year,
+  });
 }
 
 /** Step three: write it to the shelf. */
-async function commitSuggestion(title, author, cover, isbn, buy){
+async function commitSuggestion({ title, author, cover, isbn, isbn13, buy, description, pages, year }){
   const me = activeDevice();
 
   const dupe = STORE.books.find(b => b.title.toLowerCase() === title.toLowerCase());
@@ -1655,7 +1842,7 @@ async function commitSuggestion(title, author, cover, isbn, buy){
 
   const [c1,c2] = FALLBACK[Math.floor(Math.random()*FALLBACK.length)];
   const row = {
-    id: uid('bk'), title, author, isbn: isbn || null,
+    id: uid('bk'), title, author, isbn: isbn || null, isbn13: isbn13 || null,
     cover_url: cover || null,
     cover_large: cover ? cover.replace(/-M\.jpg$/, '-L.jpg') : null,
     amazon: buy || (isbn ? amazonURL(isbn) : null),
@@ -1665,6 +1852,9 @@ async function commitSuggestion(title, author, cover, isbn, buy){
     // A confirmed lookup carries its own cover and author, so it needs no
     // cleanup. A raw title does.
     needs_review: !cover,
+    description: description || null,
+    page_count: pages || null,
+    first_publish_year: year ? Number(year) : null,
   };
 
   const { error } = await supa.from('books').insert(row);
@@ -2369,6 +2559,7 @@ function adminBooks(el){
   $$('[data-cancel-edit]').forEach(e => e.onclick = () => { editingBookId = null; renderAdmin(); });
   $$('[data-save-edit]').forEach(e => e.onclick = async () => {
     const id = e.dataset.saveEdit;
+    const existing = book(id);
     const title = $('#e-title').value.trim();
     if (!title){ toast('Title can\'t be empty'); return; }
     const author = $('#e-author').value.trim();
@@ -2376,10 +2567,14 @@ function adminBooks(el){
     const coverURL = $('#e-cover').value.trim();
     const coverLarge = coverURL ? coverURL.replace(/-M\.jpg$/, '-L.jpg') : '';
     const amazon = $('#e-amazon').value.trim();
+    // isbn13/description/pageCount/firstPublishYear aren't in this form yet —
+    // carry the existing values through rather than wiping them to null.
     const { error } = await supa.rpc('update_book', {
       p_code: STORE.organizerCode, p_book_id: id, p_title: title, p_author: author || null,
-      p_isbn: isbn || null, p_cover_url: coverURL || null, p_cover_large: coverLarge || null,
-      p_amazon: amazon || null,
+      p_isbn: isbn || null, p_isbn13: existing.isbn13 || null,
+      p_cover_url: coverURL || null, p_cover_large: coverLarge || null, p_amazon: amazon || null,
+      p_description: existing.description || null, p_page_count: existing.pageCount || null,
+      p_first_publish_year: existing.firstPublishYear || null,
     });
     if (error){ toast('Could not save — try again'); return; }
     const b = book(id);
@@ -2599,7 +2794,7 @@ let supa = null;
 
 function bookFromRow(r){
   return {
-    id: r.id, title: r.title, author: r.author, isbn: r.isbn,
+    id: r.id, title: r.title, author: r.author, isbn: r.isbn, isbn13: r.isbn13,
     coverURL: r.cover_url, coverLarge: r.cover_large, amazon: r.amazon,
     c1: r.c1, c2: r.c2, glyph: r.glyph || '📖', status: r.status,
     addedAt: r.added_at, byToken: r.by_token, needsReview: !!r.needs_review,
@@ -2610,6 +2805,9 @@ function bookFromRow(r){
     archiveReason: r.archive_reason ?? null,
     archivedAt: r.archived_at ?? null,
     dateRead: r.date_read ?? null,
+    description: r.description ?? null,
+    pageCount: r.page_count ?? null,
+    firstPublishYear: r.first_publish_year ?? null,
   };
 }
 
