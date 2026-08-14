@@ -259,7 +259,13 @@ schedule: id, sort_index, meeting_date, skip_reason, host, book_id,
           `sort_index` orders rows explicitly since a skipped month (like
           December) has no date to sort by. `publish_results` auto-attaches
           a winner to the earliest still-undecided row — a book is discussed
-          at the *next* meeting, not the one that picked it.
+          at the *next* meeting, not the one that picked it. Member-facing
+          in `memberSchedule()` ("Meeting schedule" home tile): previously
+          read (past rows with a `book_id`, most recent first, tagged
+          "before the app" when `provenance = seed_pick`) and upcoming
+          meetings, where an empty `host` slot is claimable by anyone
+          (`claim_host_slot`, no passcode — same low-stakes pattern as
+          suggesting a book) but a filled one isn't editable in-app.
 ```
 
 `phase`: `lobby → approval → shortlist_review → ranked → results`

@@ -189,6 +189,22 @@ input,textarea{font:inherit;color:inherit}
   font-size:10.5px; font-weight:700; letter-spacing:1.1px; text-transform:uppercase;
   color:var(--ink-3); margin:14px 2px 8px;
 }
+
+/* ============================== SCHEDULE ================================== */
+.schedrow{
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:11px 2px; border-bottom:1px solid var(--hair);
+}
+.schedrow.claiming{ display:block; }
+.schedrow:last-child{ border-bottom:none; }
+.schedrow .sd{ font-size:14px; font-weight:600; color:var(--ink); }
+.schedrow .sd.off{ color:var(--ink-3); font-weight:500; font-style:italic; }
+.schedrow .sh{ font-size:12.5px; color:var(--ink-2); }
+.nexttag{
+  display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+  background:var(--gold); color:var(--navy); border-radius:4px; padding:2px 6px; margin-right:7px;
+  vertical-align:middle;
+}
 .rankslot{
   display:flex; align-items:center; gap:11px; background:var(--card);
   border-radius:var(--r-md); padding:10px 12px 10px 10px; margin-bottom:9px;
@@ -1448,6 +1464,7 @@ function memberLobby(){
   if (s === 'books')    return memberShelf();
   if (s === 'detail')   return memberBookDetail();
   if (s === 'nominate') return memberNominate();
+  if (s === 'schedule') return memberSchedule();
   return memberHome();
 }
 
@@ -1503,6 +1520,15 @@ function memberHome(){
         <span class="chev">${CHEV}</span>
       </button>
 
+      <button class="tile" id="t-schedule">
+        <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg></span>
+        <span class="meta">
+          <span class="tt">Meeting schedule</span>
+          <div class="td">Previously read, and who's hosting next</div>
+        </span>
+        <span class="chev">${CHEV}</span>
+      </button>
+
       <div class="statusline">
         <span class="dot breathe"></span>
         ${M().phase === 'lobby' ? 'Voting hasn\'t opened yet' : 'Voting is in progress'}
@@ -1511,6 +1537,7 @@ function memberHome(){
     </div>`;
 
   $('#t-books').onclick = () => goto('books');
+  $('#t-schedule').onclick = () => goto('schedule');
   $('#t-nominate').onclick = () => sw.open
     ? goto('nominate')
     : toast(sw.opensAt ? `Suggestions reopen ${formatDeadline(sw.opensAt)}` : 'Suggestions are closed for now');
@@ -1552,6 +1579,90 @@ function memberShelf(){
   $('#s-back').onclick = () => goto('home');
   $$('.bookcard').forEach(el => el.onclick = () => goto('detail', el.dataset.id));
   const n = $('#s-nominate'); if (n) n.onclick = () => goto('nominate');
+}
+
+/** Today's calendar date in the club's own timezone — never the device's,
+    same reasoning as the suggestion window (a member traveling shouldn't
+    see a different "next meeting" than one at home). */
+function todayInClubTZ(){
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: CLUB_TIMEZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
+    .reduce((o,p) => (p.type !== 'literal' && (o[p.type] = p.value), o), {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+let claimingScheduleId = null;
+
+/** Not to be confused with the `meetings` table — this reads the calendar
+    (`schedule`), not tonight's live vote. Previously read shows the meeting
+    where a book was *discussed*, not when it won (CLAUDE.md's data model —
+    a winner is discussed at the following meeting). */
+function memberSchedule(){
+  const today = todayInClubTZ();
+  const rows = STORE.schedule;
+  const past = rows.filter(r => r.meetingDate && r.meetingDate < today && r.bookId)
+    .sort((a,b) => b.sortIndex - a.sortIndex);
+  const upcoming = rows.filter(r => !r.meetingDate || r.meetingDate >= today)
+    .sort((a,b) => a.sortIndex - b.sortIndex);
+  const nextId = (upcoming.find(r => r.meetingDate) || {}).id;
+
+  vp().innerHTML = `${practiceBar()}${orgBar()}
+    <header class="appbar">
+      <button class="nav-btn" id="sc-back">${BACK}</button>
+      <h1>Meeting Schedule</h1>
+      <div class="sub">Previously read, and who's hosting next</div>
+    </header>
+    <div class="body">
+      ${past.length ? `<div class="seclabel">Previously read</div>
+        ${past.map(r => {
+          const b = book(r.bookId);
+          if (!b) return '';
+          return `<div class="adminbook">${coverHTML(b)}
+            <span class="meta"><span class="at">${esc(b.title)}</span><div class="aa">${esc(b.author)}</div>
+              <div class="aa" style="margin-top:2px">Discussed ${esc(prettyDate(r.meetingDate))}</div></span>
+            ${r.provenance === 'seed_pick' ? '<span class="tag">before the app</span>' : ''}
+          </div>`;
+        }).join('')}` : ''}
+
+      <div class="seclabel" style="margin-top:${past.length ? '18px' : '0'}">Upcoming meetings</div>
+      ${upcoming.map(r => {
+        const isNext = r.id === nextId;
+        if (!r.meetingDate){
+          return `<div class="schedrow"><span class="sd off">${esc(r.skipReason || 'No meeting')}</span></div>`;
+        }
+        if (claimingScheduleId === r.id){
+          return `<div class="schedrow claiming">
+            <span class="sd">${esc(prettyDate(r.meetingDate))}</span>
+            <input class="control" id="claim-name" placeholder="Your name" maxlength="40" style="margin-top:8px">
+            <div style="height:8px"></div>
+            <button class="btn btn-primary btn-sm" data-confirm-claim="${r.id}">I'll host</button>
+            <button class="btn btn-ghost btn-sm" data-cancel-claim="1">Cancel</button>
+          </div>`;
+        }
+        return `<div class="schedrow">
+          <span class="sd">${isNext ? '<span class="nexttag">next</span> ' : ''}${esc(prettyDate(r.meetingDate))}</span>
+          ${r.host
+            ? `<span class="sh">Hosted by ${esc(r.host)}</span>`
+            : `<button class="btn btn-outline btn-sm" data-claim="${r.id}">Host this one</button>`}
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  $('#sc-back').onclick = () => goto('home');
+  $$('[data-claim]').forEach(el => el.onclick = () => { claimingScheduleId = el.dataset.claim; memberSchedule(); });
+  $$('[data-cancel-claim]').forEach(el => el.onclick = () => { claimingScheduleId = null; memberSchedule(); });
+  $$('[data-confirm-claim]').forEach(el => el.onclick = async () => {
+    const id = el.dataset.confirmClaim;
+    const name = $('#claim-name').value.trim();
+    if (!name){ toast('Add your name first'); return; }
+    const { error } = await supa.rpc('claim_host_slot', { p_schedule_id: id, p_host: name });
+    if (error){ toast('Could not save — try again'); return; }
+    const row = STORE.schedule.find(r => r.id === id);
+    if (row) row.host = name;
+    claimingScheduleId = null;
+    toast(`Thanks for hosting!`);
+    memberSchedule();
+  });
 }
 
 function memberBookDetail(){
