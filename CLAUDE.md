@@ -99,8 +99,19 @@ tie-break UI, you have broken the design.
 - Ties for last are broken by **countback** (weakest in the most recent round
   where they differed), then deterministically. Same ballots always produce the
   same winner; verified across 300 shuffles.
-- Typical result: 1.6 rounds. Most nights someone wins on first preferences and
-  the runoff never runs. It is insurance, not ceremony.
+- **A genuine tie for the win** (dead-level at the top, no majority) is broken
+  the same deterministic way, but in the opposite direction — strongest in the
+  most recent round where the tied books differed, since a winner-tie should
+  favor sustained support, not less of it. Both results screens say so plainly
+  when it happens (`result.irv.tied`) rather than presenting a coin flip as a
+  clean win. Resolved this way after simulating the club's actual first real
+  meeting shape (26+ candidates, 11 voters): a genuine winner-tie hit ~11% of
+  the time at that ratio, far from a corner case.
+- Typical result is shelf-size-dependent, not a fixed number — 1.6 rounds was
+  measured at the original 9-voter/17-book shape. The club's actual first real
+  meeting (27 candidates, 11 voters, 2026-08-13) took 6 rounds. More candidates
+  relative to voters means closer races and more rounds; re-run
+  `tests/tie_check.js` with real numbers before assuming "ties are rare."
 
 ### The organizer is a member
 
@@ -262,9 +273,16 @@ organizer passcode checked inside a database function
    `STORE`, which doesn't exist anymore now that state lives in a shared
    database. `tests/shortlist.js` and `tests/archive_sim.js` cover the same
    ground (the fuzzed scenarios) without touching real data.
-5. Later, non-blocking: feed the public club site's book lists; append a
-   human-readable meeting record to a Google Doc. Neither should be a
-   dependency.
+5. **`expected_voters` has no UI and defaults to 9** (`supabase/schema.sql`).
+   It only drives the "X of Y voted" progress display — nothing is gated by
+   it — but with a turnout that doesn't match, the count reads oddly (e.g.
+   "11 of 9 voted"). For now, set it per meeting directly in SQL:
+   `update meetings set expected_voters = N where is_current = true;`
+6. Later, non-blocking: feed the public club site's book lists; append a
+   human-readable meeting record to a Google Doc. Proven manually for the
+   first real meeting (2026-08-13) — pulled the actual result JSON from
+   Supabase and wrote it to a Doc by hand, not automated yet. Neither this
+   nor the public-site feed should become a dependency.
 
 ---
 
@@ -274,7 +292,7 @@ Four Node suites in `tests/`. They extract functions out of `index.html` by
 regex and run them headlessly — no build, no test framework.
 
 ```
-node tests/irv.js        # 11 — instant-runoff, incl. 4,000-election fuzz
+node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 10 — tally, archiving, end-to-end meeting
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
 node tests/lookup.js     # 12 — Open Library parsing and failure modes
@@ -301,6 +319,19 @@ if extraction fails they throw loudly rather than silently testing nothing.
   10 where available and falls back to an Amazon search otherwise.
 - Uploading from Windows can mangle filenames (`index ~1.html`). Check the name
   after every upload.
+- **Any Supabase write from the client needs its error checked, not fired and
+  forgotten.** `commitSuggestion()`'s call to `add_candidate_if_lobby` was
+  originally unawaited — caught live at the club's first real meeting
+  (2026-08-13), where 9 of 26 real suggestions never made it onto that
+  night's ballot with no error, no toast, nothing. A phone backgrounding
+  right after "Add" is enough to lose an unawaited request. Every write now
+  awaits its result and tells the user if it failed.
+- **`nextClubMeeting()` needs to compare dates, not timestamps.** It used to
+  check `secondThursday < new Date()`, which is true for the entire evening
+  of the meeting's own day (not just after it) — so from about 12:01am
+  onward, "next meeting" showed next month instead of tonight. Also caught
+  live, same night. Compare against the start of the current day, not the
+  exact moment.
 
 ---
 
