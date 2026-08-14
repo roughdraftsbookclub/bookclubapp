@@ -2254,6 +2254,29 @@ function adminMeeting(el){
 
 /* --- Books tab: bulk add with simulated fuzzy matching --------------------- */
 let pendingMatches = [];
+let editingBookId = null;
+
+function bookEditFormHTML(b){
+  return `<div class="adminbook" style="display:block">
+    <label class="flabel" for="e-title">Title</label>
+    <input class="control" id="e-title" value="${esc(b.title)}">
+    <div style="height:9px"></div>
+    <label class="flabel" for="e-author">Author</label>
+    <input class="control" id="e-author" value="${esc(b.author||'')}">
+    <div style="height:9px"></div>
+    <label class="flabel" for="e-isbn">ISBN</label>
+    <input class="control" id="e-isbn" value="${esc(b.isbn||'')}">
+    <div style="height:9px"></div>
+    <label class="flabel" for="e-cover">Cover URL</label>
+    <input class="control" id="e-cover" value="${esc(b.coverURL||'')}">
+    <div style="height:9px"></div>
+    <label class="flabel" for="e-amazon">Amazon link</label>
+    <input class="control" id="e-amazon" value="${esc(b.amazon||'')}">
+    <div style="height:12px"></div>
+    <button class="btn btn-primary btn-sm" data-save-edit="${b.id}">Save</button>
+    <button class="btn btn-ghost btn-sm" data-cancel-edit="1">Cancel</button>
+  </div>`;
+}
 
 function adminBooks(el){
   el.innerHTML = `
@@ -2292,17 +2315,24 @@ function adminBooks(el){
     </div>` : ''}
     <div class="panel">
       <h3>All books — ${STORE.books.length}</h3>
-      ${STORE.books.map(b => `
+      ${STORE.books.map(b => editingBookId === b.id ? bookEditFormHTML(b) : `
         <div class="adminbook">${coverHTML(b)}
           <span class="meta"><span class="at">${esc(b.title)}</span><div class="aa">${esc(b.author)}</div>
             <div class="aa" style="margin-top:3px">${plural(b.meetingsConsidered,'meeting','meetings')} · ${b.shortlistMisses} misses</div></span>
           ${b.needsReview ? '<span class="tag review">check</span>' : ''}
           <span class="tag ${b.status === 'archived' ? 'archived' : b.status === 'current' ? 'current' : ''}">${b.status}</span>
-          <button class="iconbtn" data-toggle="${b.id}" title="${b.status === 'archived' ? 'Reactivate':'Archive'}">
+          <button class="iconbtn" data-edit="${b.id}" title="Edit">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 12.5 4.5 4.5 12.5 1.5 12.5 1.5 9.5Z"/></svg>
+          </button>
+          <button class="iconbtn" data-toggle="${b.id}" title="${b.status === 'archived' ? 'Reactivate':'Archive'}"
+            ${b.status === 'current' || b.status === 'read' ? 'disabled' : ''}>
             ${b.status === 'archived'
               ? `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 12V2M2.5 6.5 7 2l4.5 4.5"/></svg>`
               : `<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7 2v10M2.5 7.5 7 12l4.5-4.5"/></svg>`}
           </button>
+          ${b.status === 'active' || b.status === 'archived' ? `<button class="iconbtn" data-delete="${b.id}" title="Delete">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5h10M5.5 3.5V2h3v1.5M3 3.5 3.6 12h6.8L11 3.5"/></svg>
+          </button>` : ''}
         </div>`).join('')}
     </div>`;
 
@@ -2318,16 +2348,52 @@ function adminBooks(el){
     toast('Found 3 books on that page');
     renderMatches();
   };
-  $$('[data-ok]').forEach(e => e.onclick = () => {
-    book(e.dataset.ok).needsReview = false;
+  $$('[data-ok]').forEach(e => e.onclick = async () => {
+    const b = book(e.dataset.ok);
+    const { error } = await supa.rpc('confirm_book', { p_code: STORE.organizerCode, p_book_id: b.id });
+    if (error){ toast('Could not confirm — try again'); return; }
+    b.needsReview = false;
     toast('Confirmed'); renderAdmin();
   });
-  $$('[data-toggle]').forEach(e => e.onclick = () => {
+  $$('[data-toggle]').forEach(e => e.onclick = async () => {
     const b = book(e.dataset.toggle);
-    b.status = b.status === 'archived' ? 'active' : 'archived';
-    b.archiveReason = b.status === 'archived' ? 'Archived by organizer' : null;
+    const wasArchived = b.status === 'archived';
+    const { error } = await supa.rpc('toggle_book_archived', { p_code: STORE.organizerCode, p_book_id: b.id });
+    if (error){ toast('Could not update — try again'); return; }
+    b.status = wasArchived ? 'active' : 'archived';
+    b.archiveReason = wasArchived ? null : 'Archived by organizer';
     toast(`${b.title} → ${b.status}`);
     renderAdmin();
+  });
+  $$('[data-edit]').forEach(e => e.onclick = () => { editingBookId = e.dataset.edit; renderAdmin(); });
+  $$('[data-cancel-edit]').forEach(e => e.onclick = () => { editingBookId = null; renderAdmin(); });
+  $$('[data-save-edit]').forEach(e => e.onclick = async () => {
+    const id = e.dataset.saveEdit;
+    const title = $('#e-title').value.trim();
+    if (!title){ toast('Title can\'t be empty'); return; }
+    const author = $('#e-author').value.trim();
+    const isbn = $('#e-isbn').value.trim();
+    const coverURL = $('#e-cover').value.trim();
+    const coverLarge = coverURL ? coverURL.replace(/-M\.jpg$/, '-L.jpg') : '';
+    const amazon = $('#e-amazon').value.trim();
+    const { error } = await supa.rpc('update_book', {
+      p_code: STORE.organizerCode, p_book_id: id, p_title: title, p_author: author || null,
+      p_isbn: isbn || null, p_cover_url: coverURL || null, p_cover_large: coverLarge || null,
+      p_amazon: amazon || null,
+    });
+    if (error){ toast('Could not save — try again'); return; }
+    const b = book(id);
+    Object.assign(b, { title, author, isbn, coverURL, coverLarge, amazon, needsReview: false });
+    editingBookId = null;
+    toast('Saved'); renderAdmin();
+  });
+  $$('[data-delete]').forEach(e => e.onclick = async () => {
+    const b = book(e.dataset.delete);
+    if (!confirm(`Delete "${b.title}" permanently? This can't be undone.`)) return;
+    const { error } = await supa.rpc('delete_book', { p_code: STORE.organizerCode, p_book_id: b.id });
+    if (error){ toast('Could not delete — it may be linked to a scheduled meeting'); return; }
+    STORE.books = STORE.books.filter(x => x.id !== b.id);
+    toast(`${b.title} deleted`); renderAdmin();
   });
 }
 

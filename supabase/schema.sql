@@ -483,6 +483,102 @@ end;
 $$;
 grant execute on function set_expected_voters(text, uuid, integer) to anon;
 
+-- The admin Books tab used to mutate STORE.books in memory only — a success
+-- toast, then silently lost on the next reload or realtime refresh (CLAUDE.md,
+-- What's stubbed). These four replace that with real writes. Deliberately
+-- scoped to the columns that exist today; description/page count/pub year
+-- come later alongside the Open Library ingestion rewrite.
+
+-- The lightweight "looks right" tap — no form, just clears the review flag.
+create or replace function confirm_book(p_code text, p_book_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not check_organizer_code(p_code) then
+    raise exception 'wrong organizer code';
+  end if;
+  update books set needs_review = false where id = p_book_id;
+end;
+$$;
+grant execute on function confirm_book(text, text) to anon;
+
+-- Full metadata correction. Editing implies review, so this also clears
+-- needs_review — an organizer fixing a title has, by definition, checked it.
+create or replace function update_book(
+  p_code        text,
+  p_book_id     text,
+  p_title       text,
+  p_author      text,
+  p_isbn        text,
+  p_cover_url   text,
+  p_cover_large text,
+  p_amazon      text
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not check_organizer_code(p_code) then
+    raise exception 'wrong organizer code';
+  end if;
+  update books set
+    title = p_title, author = p_author, isbn = p_isbn,
+    cover_url = p_cover_url, cover_large = p_cover_large, amazon = p_amazon,
+    needs_review = false
+  where id = p_book_id;
+end;
+$$;
+grant execute on function update_book(text, text, text, text, text, text, text, text) to anon;
+
+-- Only ever flips between active and archived — current/read status changes
+-- happen through publish_results, not here, so this can't be used to yank
+-- the book the club is actually reading out from under it.
+create or replace function toggle_book_archived(p_code text, p_book_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not check_organizer_code(p_code) then
+    raise exception 'wrong organizer code';
+  end if;
+  update books set
+    status = (case when status = 'archived' then 'active' else 'archived' end)::book_status,
+    archive_reason = case when status = 'archived' then null else 'Archived by organizer' end,
+    archived_at = case when status = 'archived' then null else current_date end
+  where id = p_book_id and status in ('active', 'archived');
+end;
+$$;
+grant execute on function toggle_book_archived(text, text) to anon;
+
+-- Real deletion, for mistaken entries rather than books the club just
+-- didn't vote for (that's what archiving is for). Restricted to books that
+-- were never current or read — deleting real club history should be hard,
+-- not a two-tap accident. Anything the schedule table still points to (a
+-- book that was actually discussed) is protected a second time over, by
+-- the foreign key itself: the delete simply fails rather than orphaning
+-- schedule history.
+create or replace function delete_book(p_code text, p_book_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not check_organizer_code(p_code) then
+    raise exception 'wrong organizer code';
+  end if;
+  delete from books where id = p_book_id and status in ('active', 'archived');
+end;
+$$;
+grant execute on function delete_book(text, text) to anon;
+
 
 -- ============================================================================
 -- 7. REALTIME

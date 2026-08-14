@@ -272,14 +272,20 @@ organizer passcode checked inside a database function
    visit with `?organizer` in the URL remembers it in `localStorage`; the
    passcode is still the real gate. Splitting it onto a real separate page is
    unstarted.
-2. **The admin "Books" tab is still entirely fake.** "Import from the club
-   page" returns three hardcoded titles, `fuzzyMatch()` runs against a
-   made-up catalogue rather than Open Library, and confirming a suggestion /
-   archiving / reactivating a book only mutates the in-memory `STORE.books`
-   array — nothing is written to Supabase. Right now these controls show a
-   success toast and then silently lose the change on the next reload or
-   realtime refresh. **Don't use them for real organizing yet** — archive
-   real books by editing the `books` table directly until this is wired.
+2. **Resolved: confirming, editing, archiving/reactivating, and deleting a
+   book are all real now** (`confirm_book`, `update_book`,
+   `toggle_book_archived`, `delete_book` — passcode-gated, same pattern as
+   every other organizer action). Deletion is deliberately narrower than
+   archiving: only `active`/`archived` books can be deleted (never
+   `current`/`read`), and the `schedule` table's foreign key is a second
+   backstop — a book that was actually discussed can't be deleted even by
+   mistake, the delete just fails. Editing a book clears `needs_review`
+   (fixing a title *is* the review). Scoped to the columns that exist
+   today — description, page count, and publish year aren't editable yet,
+   pending the Open Library ingestion rewrite below.
+   **Still fake:** "Import from the club page" (three hardcoded titles) and
+   `fuzzyMatch()`'s bulk-add (a made-up catalogue, not Open Library) — out
+   of scope for this pass, not part of the original stubbed-feature list.
 3. **Practice mode is disabled**, not wired. The old client-only
    `newMeeting(true)` swap doesn't make sense against one shared `is_current`
    meeting row — flipping it locally would either do nothing or, done naively,
