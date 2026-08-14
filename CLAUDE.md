@@ -149,9 +149,19 @@ couldn't run, each with an explicit "add without a cover" choice. An earlier
 version silently added the book as typed when lookup failed, which read as the
 app ignoring the user.
 
-Suggestions **lock the moment Phase One opens** — the candidate list must not
-move under a ballot in progress. A book added during the lobby does join that
-night's ballot.
+**Resolved: suggestions lock on a calendar schedule, not when Phase One
+opens.** The window closes 11:59pm the Sunday before the next meeting and
+reopens 9pm the night of — derived from the `schedule` table
+(`suggestionWindowState()`), pinned to `CLUB_TIMEZONE` (`America/New_York`),
+never the device clock. Verified against a full season of confirmed dates
+in `tests/schedule.js`, including that a skipped month (December) just falls
+out of the data — the window opened after November stays open straight
+through the holidays and closes ahead of January, no special case needed.
+The organizer's `add_candidate_if_lobby` phase check is still the
+server-side backstop for "does this book join *tonight's* specific ballot,"
+but the calendar window is what members actually see and what decides
+whether suggesting is offered at all. A book suggested during the window
+does join that night's ballot once voting opens, same as before.
 
 Member suggestions go live immediately but are flagged `needsReview` so the
 organizer can fix bad metadata. Anything confirmed through the lookup already
@@ -296,7 +306,7 @@ organizer passcode checked inside a database function
 
 ## Tests
 
-Four Node suites in `tests/`. They extract functions out of `index.html` by
+Five Node suites in `tests/`. They extract functions out of `index.html` by
 regex and run them headlessly — no build, no test framework.
 
 ```
@@ -304,11 +314,14 @@ node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 10 — tally, archiving, end-to-end meeting
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
 node tests/lookup.js     # 12 — Open Library parsing and failure modes
+node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
+                          #      confirmed date through Jul 2027 and December
 ```
 
-If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`
-or `lookupBook`, run these. The regexes in the harnesses are brittle by design —
-if extraction fails they throw loudly rather than silently testing nothing.
+If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
+`lookupBook`, or `suggestionWindowState`, run these. The regexes in the
+harnesses are brittle by design — if extraction fails they throw loudly
+rather than silently testing nothing.
 
 ---
 

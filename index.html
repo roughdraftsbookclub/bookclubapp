@@ -838,6 +838,63 @@ function nextClubMeeting(from = new Date()){
   return d;
 }
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+
+/* ==========================================================================
+   SUGGESTION WINDOW — derived from the schedule, not a weekly cadence and
+   not the second-Thursday rule. Opens 9pm the night of a meeting, closes
+   11:59pm the Sunday before the *next* one — so a skipped month (December)
+   just falls out of the data: the window opened after November stays open
+   straight through the holidays and closes ahead of January, no special
+   case needed. Replaces the old "locks the moment Phase One opens" rule.
+   ========================================================================== */
+const CLUB_TIMEZONE = 'America/New_York';   // pinned once, never the device clock
+
+/** The UTC instant whose wall-clock reading in `tz` is y-m-d hh:mm. */
+function zonedDate(y, m, d, hh, mm, tz){
+  const guess = Date.UTC(y, m, d, hh, mm);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(guess)).reduce((o,p) => (p.type !== 'literal' && (o[p.type] = +p.value), o), {});
+  const readAsUTC = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second || 0);
+  return new Date(guess - (readAsUTC - guess));
+}
+
+/** The Sunday immediately before the given date (UTC calendar date, no time-of-day). */
+function sundayBefore(y, m, d){
+  const dt = new Date(Date.UTC(y, m, d));
+  const back = dt.getUTCDay() === 0 ? 7 : dt.getUTCDay();
+  dt.setUTCDate(dt.getUTCDate() - back);
+  return [dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()];
+}
+
+/**
+ * Whether suggestions are open right now, from the schedule table alone.
+ * scheduleRows: [{sortIndex, meetingDate: 'YYYY-MM-DD' | null}, ...]
+ */
+function suggestionWindowState(scheduleRows, now = new Date()){
+  const dated = scheduleRows.filter(r => r.meetingDate).slice().sort((a,b) => a.sortIndex - b.sortIndex);
+  if (!dated.length) return { open: true, opensAt: null, closesAt: null };   // no schedule yet — never block on missing data
+
+  const periods = dated.map((row, i) => {
+    const [y,m,d] = row.meetingDate.split('-').map(Number);
+    const opensAt = zonedDate(y, m - 1, d, 21, 0, CLUB_TIMEZONE);
+    const next = dated[i + 1];
+    let closesAt = null;
+    if (next){
+      const [ny,nm,nd] = next.meetingDate.split('-').map(Number);
+      const [sy,sm,sd] = sundayBefore(ny, nm - 1, nd);
+      closesAt = zonedDate(sy, sm, sd, 23, 59, CLUB_TIMEZONE);
+    }
+    return { opensAt, closesAt };
+  });
+
+  for (const p of periods)
+    if (now >= p.opensAt && (p.closesAt === null || now < p.closesAt)) return { open: true, ...p };
+
+  const upcoming = periods.find(p => p.opensAt > now);
+  return { open: false, opensAt: upcoming ? upcoming.opensAt : null, closesAt: null };
+}
 const prettyDate = s => new Date(s + 'T00:00:00')
   .toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric' });
 
@@ -848,6 +905,7 @@ const STORE = {
   books: [],
   currentBookId: null,
   club: { autoDate: true, date: '', time: '', host: '', location: '', locationNote: '' },
+  schedule: [],
   meeting: null,
   adminOpen: false,            // organizer console pulled up
   organizerUnlocked: false,    // passcode entered this session
@@ -1248,7 +1306,10 @@ const goto = (screen, bookId=null) => {
   Object.assign(nav(), { screen, bookId });
   render();
 };
-const nominatingOpen = () => M().phase === 'lobby';
+const suggestionWindow = () => suggestionWindowState(STORE.schedule);
+const formatDeadline = d => d.toLocaleString('en-US', {
+  timeZone: CLUB_TIMEZONE, weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit',
+});
 
 const BOOKMARK = `<svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3">
   <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H12v20H6.5A2.5 2.5 0 0 1 4 19.5v-15Z"/>
@@ -1271,6 +1332,7 @@ function memberHome(){
   const cur = STORE.currentBookId ? book(STORE.currentBookId) : null;
   const c = STORE.club;
   const days = Math.round((new Date(c.date + 'T00:00:00') - new Date().setHours(0,0,0,0)) / 864e5);
+  const sw = suggestionWindow();
 
   vp().innerHTML = `${practiceBar()}${orgBar()}
     <div class="brandhdr">${logoImg(238)}</div>
@@ -1308,30 +1370,31 @@ function memberHome(){
         <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
         <span class="meta">
           <span class="tt">Suggest a book</span>
-          <div class="td">${nominatingOpen()
+          <div class="td">${sw.open
             ? 'Add something you\'d like the club to read'
-            : 'Closed while voting is open'}</div>
+            : (sw.opensAt ? `Reopens ${formatDeadline(sw.opensAt)}` : 'Closed for now')}</div>
         </span>
         <span class="chev">${CHEV}</span>
       </button>
 
       <div class="statusline">
         <span class="dot breathe"></span>
-        ${nominatingOpen() ? 'Voting hasn\'t opened yet' : 'Voting is in progress'}
+        ${M().phase === 'lobby' ? 'Voting hasn\'t opened yet' : 'Voting is in progress'}
       </div>
       <div style="height:10px"></div>
     </div>`;
 
   $('#t-books').onclick = () => goto('books');
-  $('#t-nominate').onclick = () => nominatingOpen()
+  $('#t-nominate').onclick = () => sw.open
     ? goto('nominate')
-    : toast('Suggestions reopen after the vote');
+    : toast(sw.opensAt ? `Suggestions reopen ${formatDeadline(sw.opensAt)}` : 'Suggestions are closed for now');
 }
 
 function memberShelf(){
   const me = activeDevice();
   const active = STORE.books.filter(b => b.status === 'active')
     .sort((a,b) => new Date(b.addedAt) - new Date(a.addedAt));
+  const sw = suggestionWindow();
 
   vp().innerHTML = `${practiceBar()}${orgBar()}
     <header class="appbar">
@@ -1354,9 +1417,10 @@ function memberShelf(){
       </div>
     </div>
     <div class="actionbar">
-      ${nominatingOpen()
-        ? `<button class="btn btn-primary" id="s-nominate">Suggest a Book</button>`
-        : `<div class="lockcard">The list is locked while voting is open.</div>`}
+      ${sw.open
+        ? `<button class="btn btn-primary" id="s-nominate">Suggest a Book</button>
+           ${sw.closesAt ? `<div class="subnote" style="text-align:center;margin-top:8px">Closes ${formatDeadline(sw.closesAt)}</div>` : ''}`
+        : `<div class="lockcard">The list is locked until ${sw.opensAt ? formatDeadline(sw.opensAt) : 'the next meeting'}.</div>`}
     </div>`;
 
   $('#s-back').onclick = () => goto('home');
@@ -2483,6 +2547,18 @@ async function refreshBooks(){
   STORE.books = (data || []).map(bookFromRow);
 }
 
+function scheduleRowFromRow(r){
+  return {
+    id: r.id, sortIndex: r.sort_index, meetingDate: r.meeting_date,
+    skipReason: r.skip_reason, host: r.host, bookId: r.book_id, provenance: r.provenance,
+  };
+}
+
+async function refreshSchedule(){
+  const { data } = await supa.from('schedule').select('*').order('sort_index');
+  STORE.schedule = (data || []).map(scheduleRowFromRow);
+}
+
 async function refreshCurrentMeeting(){
   const { data } = await supa.from('meetings').select('*').eq('is_current', true).limit(1);
   const row = (data || [])[0];
@@ -2533,6 +2609,19 @@ function subscribeRealtime(){
       else bucket[r.token] = r.book_ids;
       render();
     }).subscribe();
+
+  supa.channel('rd-schedule').on('postgres_changes',
+    { event: '*', schema: 'public', table: 'schedule' }, payload => {
+      const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+      if (!row) return;
+      const idx = STORE.schedule.findIndex(s => s.id === row.id);
+      if (payload.eventType === 'DELETE'){ if (idx >= 0) STORE.schedule.splice(idx, 1); }
+      else {
+        const mapped = scheduleRowFromRow(payload.new);
+        if (idx >= 0) STORE.schedule[idx] = mapped; else STORE.schedule.push(mapped);
+      }
+      render();
+    }).subscribe();
 }
 
 async function bootstrap(){
@@ -2542,6 +2631,7 @@ async function bootstrap(){
     supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     await refreshBooks();
+    await refreshSchedule();
 
     const { data: clubRows } = await supa.from('club').select('*').limit(1);
     const clubRow = (clubRows || [])[0];
