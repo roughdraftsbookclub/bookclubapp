@@ -189,9 +189,14 @@ Open Library's own catalog for their real editions (adaptations, "making of"
 companion books, or a bogus indexed year on the work record itself) — every
 automated match traced back to the wrong book or a nonsense date. Writing a
 plausible-looking but unverified fact into a production record is worse than
-leaving it blank, so those five wait on the organizer's edit-form fields
-above. A future re-suggestion of a book always overwrites this cleanly
-regardless, since suggesting always re-fetches from scratch.
+leaving it blank, so those five were held for the organizer's edit-form
+fields above rather than guessed. **Resolved: filled in by hand**
+(`supabase/backfill_metadata_manual.sql`) — the organizer supplied
+year/pages/description directly for all five, plus the two books
+(*The Heaven & Earth Grocery Store*, *The Lords of Discipline*) that came out
+of the automated pass with only some fields set. Every book on the shelf now
+has complete metadata. A future re-suggestion of a book always overwrites
+this cleanly regardless, since suggesting always re-fetches from scratch.
 
 **Resolved: suggestions lock on a calendar schedule, not when Phase One
 opens.** The window closes 11:59pm the Sunday before the next meeting and
