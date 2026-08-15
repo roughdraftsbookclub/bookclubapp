@@ -169,9 +169,18 @@ back to an Amazon search — never a bare, non-functional title string.
 
 `description` (work-level, cached at suggestion time, never re-fetched on
 render), `page_count` and `first_publish_year` are stored on the book record
-now too, feeding the eventual detail page — `first_publish_year` always
-comes from the *work* (the original publication), not whichever edition was
-picked, so a 2001 reprint of a 1952 novel still shows 1952.
+— `first_publish_year` always comes from the *work* (the original
+publication), not whichever edition was picked, so a 2001 reprint of a 1952
+novel still shows 1952.
+
+**Resolved: the book detail page is live** (`memberBookDetail()`). Cover,
+title, author, a "year · pages" line (`bookFacts()`), the Amazon link, and
+the cached description, with an explicit "No description found yet" fallback
+rather than a blank space. The same "year · pages" line also renders on each
+row of the shelf list (`memberShelf()`), not just the detail page. Only
+suggestions added since the Open Library ingestion rewrite carry this data —
+the original 27-book shelf was never backfilled, so most existing rows still
+show no facts line at all until re-suggested or edited in by the organizer.
 
 **Resolved: suggestions lock on a calendar schedule, not when Phase One
 opens.** The window closes 11:59pm the Sunday before the next meeting and
@@ -410,6 +419,13 @@ drawn for a light background, so headers carrying it are cream, not navy.
 
 Gold on cream is about 3.5:1, fine for rules and large type but too weak for
 small text; small gold labels use `#7A5A16`.
+
+**Book titles all scale from one knob:** `--book-title-scale` (`:root`, currently
+`1.15`). Every place a title renders — shelf, the approval-round grid, both
+ranking-screen title spots, the winner screen, previously-read — computes its
+`font-size` as `calc(<base>px * var(--book-title-scale))` off that one custom
+property rather than a hardcoded px value. Change the variable, not the five
+individual rules, next time this needs to move.
 
 ---
 
