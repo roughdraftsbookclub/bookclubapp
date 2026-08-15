@@ -563,22 +563,29 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 
 .booklist{ display:flex; flex-direction:column; gap:10px; padding-bottom:6px; }
 .bookcard{
-  display:flex; align-items:center; gap:13px; width:100%; text-align:left;
-  background:var(--card); border-radius:var(--r-md); padding:13px 12px 13px 13px;
+  display:flex; align-items:center; gap:14px; width:100%; text-align:left;
+  background:var(--card); border-radius:var(--r-md); padding:9px 14px 9px 15px;
   box-shadow:var(--shadow); transition:transform .12s ease;
   animation:pop .3s cubic-bezier(.32,.72,0,1) both;
 }
 .bookcard:active{ transform:scale(.985); }
+/* Bigger than the default .cover — about 5 rows fit on a phone screen
+   without scrolling, a deliberate trade against showing more of the shelf
+   at once. Scoped to this row only; other screens keep the compact cover. */
+.bookcard .cover{ width:60px; height:90px; padding:6px 5px; }
+.bookcard .cover .ct{ font-size:8.5px; }
+.bookcard .cover .ca{ font-size:6px; }
+.bookcard .cover .glyph{ font-size:38px; }
 .bookcard .meta{ flex:1 1 auto; min-width:0; display:block; }
-.bookcard .title{ display:block; font-size:calc(14.5px * var(--book-title-scale)); font-weight:700;
+.bookcard .title{ display:block; font-size:calc(18px * var(--book-title-scale)); font-weight:700;
   line-height:1.28; letter-spacing:-.15px; }
-.bookcard .author{ font-size:13px; color:var(--ink-2); margin-top:2px; }
-.bookcard .facts{ font-size:11.5px; color:var(--ink-3); margin-top:3px; }
-.bookcard .nomby{ font-size:11.5px; color:var(--ink-3); margin-top:7px; }
+.bookcard .author{ font-size:16px; color:var(--ink-2); margin-top:3px; }
+.bookcard .facts{ font-size:14px; color:var(--ink-3); margin-top:4px; }
+.bookcard .nomby{ font-size:14px; color:var(--ink-3); margin-top:8px; }
 .bookcard .mine{
-  display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:.7px;
+  display:inline-block; font-size:11px; font-weight:700; letter-spacing:.7px;
   text-transform:uppercase; color:#7A5A16; background:rgba(194,144,46,.16);
-  padding:2px 6px; border-radius:4px; margin-top:6px;
+  padding:3px 7px; border-radius:4px; margin-top:7px;
 }
 .chev{ flex:0 0 auto; color:var(--ink-3); }
 
@@ -2607,6 +2614,15 @@ function bookEditFormHTML(b){
     <div style="height:9px"></div>
     <label class="flabel" for="e-amazon">Amazon link</label>
     <input class="control" id="e-amazon" value="${esc(b.amazon||'')}">
+    <div style="height:9px"></div>
+    <label class="flabel" for="e-year">Publish year</label>
+    <input class="control" id="e-year" type="number" value="${b.firstPublishYear||''}">
+    <div style="height:9px"></div>
+    <label class="flabel" for="e-pages">Page count</label>
+    <input class="control" id="e-pages" type="number" value="${b.pageCount||''}">
+    <div style="height:9px"></div>
+    <label class="flabel" for="e-desc">Description</label>
+    <textarea class="control" id="e-desc" style="min-height:70px">${esc(b.description||'')}</textarea>
     <div style="height:12px"></div>
     <button class="btn btn-primary btn-sm" data-save-edit="${b.id}">Save</button>
     <button class="btn btn-ghost btn-sm" data-cancel-edit="1">Cancel</button>
@@ -2712,18 +2728,23 @@ function adminBooks(el){
     const coverURL = $('#e-cover').value.trim();
     const coverLarge = coverURL ? coverURL.replace(/-M\.jpg$/, '-L.jpg') : '';
     const amazon = $('#e-amazon').value.trim();
-    // isbn13/description/pageCount/firstPublishYear aren't in this form yet —
-    // carry the existing values through rather than wiping them to null.
+    const year = $('#e-year').value.trim();
+    const pages = $('#e-pages').value.trim();
+    const description = $('#e-desc').value.trim();
+    // isbn13 isn't in this form yet — carry the existing value through
+    // rather than wiping it to null.
     const { error } = await supa.rpc('update_book', {
       p_code: STORE.organizerCode, p_book_id: id, p_title: title, p_author: author || null,
       p_isbn: isbn || null, p_isbn13: existing.isbn13 || null,
       p_cover_url: coverURL || null, p_cover_large: coverLarge || null, p_amazon: amazon || null,
-      p_description: existing.description || null, p_page_count: existing.pageCount || null,
-      p_first_publish_year: existing.firstPublishYear || null,
+      p_description: description || null, p_page_count: pages ? Number(pages) : null,
+      p_first_publish_year: year ? Number(year) : null,
     });
     if (error){ toast('Could not save — try again'); return; }
     const b = book(id);
-    Object.assign(b, { title, author, isbn, coverURL, coverLarge, amazon, needsReview: false });
+    Object.assign(b, { title, author, isbn, coverURL, coverLarge, amazon, needsReview: false,
+      description: description || null, pageCount: pages ? Number(pages) : null,
+      firstPublishYear: year ? Number(year) : null });
     editingBookId = null;
     toast('Saved'); renderAdmin();
   });

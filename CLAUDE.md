@@ -177,10 +177,21 @@ novel still shows 1952.
 title, author, a "year · pages" line (`bookFacts()`), the Amazon link, and
 the cached description, with an explicit "No description found yet" fallback
 rather than a blank space. The same "year · pages" line also renders on each
-row of the shelf list (`memberShelf()`), not just the detail page. Only
-suggestions added since the Open Library ingestion rewrite carry this data —
-the original 27-book shelf was never backfilled, so most existing rows still
-show no facts line at all until re-suggested or edited in by the organizer.
+row of the shelf list (`memberShelf()`), not just the detail page.
+
+**Resolved: the pre-rewrite shelf got a one-time backfill**
+(`supabase/backfill_metadata.sql`) — 21 of the 26 books that predated the
+ingestion rewrite got a real description/page count/publish year matched
+against Open Library by title and author. **Five were left out on purpose,
+not missed:** *1984*, *Master and Commander*, *No Country for Old Men*, *The
+Alchemist*, and *Meditations* all had unreliable or actively wrong data in
+Open Library's own catalog for their real editions (adaptations, "making of"
+companion books, or a bogus indexed year on the work record itself) — every
+automated match traced back to the wrong book or a nonsense date. Writing a
+plausible-looking but unverified fact into a production record is worse than
+leaving it blank, so those five wait on the organizer's edit-form fields
+above. A future re-suggestion of a book always overwrites this cleanly
+regardless, since suggesting always re-fetches from scratch.
 
 **Resolved: suggestions lock on a calendar schedule, not when Phase One
 opens.** The window closes 11:59pm the Sunday before the next meeting and
@@ -322,9 +333,13 @@ organizer passcode checked inside a database function
    `current`/`read`), and the `schedule` table's foreign key is a second
    backstop — a book that was actually discussed can't be deleted even by
    mistake, the delete just fails. Editing a book clears `needs_review`
-   (fixing a title *is* the review). Scoped to the columns that exist
-   today — description, page count, and publish year aren't editable yet,
-   pending the Open Library ingestion rewrite below.
+   (fixing a title *is* the review). **Resolved: the edit form now covers
+   description, page count, and publish year too** — added once the ingestion
+   rewrite gave those columns something to hold. Needed immediately: the
+   original 27-book shelf predates the rewrite and was never backfilled by
+   the suggestion flow, so those three fields are the only way to fix a
+   pre-rewrite book by hand (`supabase/backfill_metadata.sql` backfilled most
+   of them in bulk from Open Library; see below for the five it couldn't).
    **Still fake:** "Import from the club page" (three hardcoded titles) and
    `fuzzyMatch()`'s bulk-add (a made-up catalogue, not Open Library) — out
    of scope for this pass, not part of the original stubbed-feature list.
@@ -435,3 +450,12 @@ Mobile first, large tap targets, very little text. Warm and plain-spoken — the
 copy should sound like a person, not an election system. Members should need no
 explanation: scan, select, submit, wait, rank, submit, see the winner, put the
 phone away.
+
+**The shelf list (`memberShelf()`) runs a bigger cover than every other
+screen** — `.bookcard .cover` overrides the shared 46×69 `.cover` default to
+60×90, scoped to that one selector so the approval grid, ranking, and admin
+console keep the compact size. Deliberate trade-off: about 5 rows fit on a
+375×812 screen without scrolling, down from ~5.6 at the old size — fewer
+books per glance, but each one reads as an actual book cover rather than a
+thumbnail. Row padding was tightened to compensate (9px vertical, was 13px)
+so the bigger cover didn't just push the row count down further.
