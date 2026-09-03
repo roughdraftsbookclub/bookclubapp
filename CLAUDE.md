@@ -221,10 +221,44 @@ has a jacket and author, so it skips the queue.
 Books that go cold land in an "archive candidates" list on the results screen
 with a reason. The organizer can spare any of them. **Nothing is archived until
 results are published.** Archived books stay in the database and can be
-suggested again.
+suggested again. This stays true for every trigger below, including the
+low-vote one — the queue just fills up faster now.
+
+**Resolved: a book scoring 0 or 1 approval votes is queued for archiving the
+same night, no streak required** (`CONFIG.lowVoteCullMax`, `buildArchiveQueue()`).
+Organizer decision, made after the club's actual first meeting: 11 of that
+night's 27 candidates (41%) scored 0-1 votes. That's a lot to queue at once,
+and it's worth knowing going in — a single Round 1 is close to statistical
+noise at this shelf-size-to-voter ratio (see the appendix in the original
+change brief), so a book that drew 0-1 votes once isn't necessarily a book
+nobody wants, just one that didn't happen to catch a vote that particular
+night. The organizer's spare-before-publish step is the safety valve for
+that, same as it's always been — it just has more work to do most meetings
+now. Never fires on a book that made tonight's shortlist, regardless of its
+vote count (a book can only reach the shortlist with a floor-fill in a very
+thin field, but the rule still needs to hold).
+
+**Resolved: any member can reactivate a culled book, no organizer passcode**
+(`reactivate_book`, `supabase/schema.sql`) — a "Books previously considered"
+tile at the bottom of the home page (`memberPreviouslyConsidered()`) lists
+every archived book with a Reactivate button, same trust model as suggesting
+a book or claiming a host slot: no login, no gate, just "I'd vouch for this
+one." Tapping through to a book's detail page from that list also offers
+Reactivate there, for a member who wants to reread the description before
+deciding. This is a different door into the same `archived` status the
+organizer's own admin-console toggle already used — a book the organizer
+archived by hand for some other reason surfaces here too, and is just as
+reactivatable; there's no separate "why" tracked. (The admin console's own
+"Archived" panel had a revive button that only ever mutated local state and
+never called Supabase — never actually persisted. Fixed to call the same
+`reactivate_book` RPC.)
 
 Thresholds are config, not hard-coded: `zeroVoteStreakToArchive` (2 consecutive
 meetings with no votes) and `shortlistMissesToArchive` (3 consecutive misses).
+These two are now a slower-acting second net behind the low-vote rule above —
+they mostly matter for a book that keeps scoring a modest 2+ votes every
+meeting but never quite cracks the shortlist, since a genuinely 0-1-vote book
+never survives long enough to build a streak anymore.
 
 **Resolved: `zeroVoteStreakToArchive: 4`, `shortlistMissesToArchive: 8`** (was 2/3).
 With a 17-book shelf and a 5-8 book shortlist, most books "miss" most nights by

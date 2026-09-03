@@ -571,16 +571,19 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 .bookcard:active{ transform:scale(.985); }
 /* Bigger than the default .cover — about 5 rows fit on a phone screen
    without scrolling, a deliberate trade against showing more of the shelf
-   at once. Scoped to this row only; other screens keep the compact cover. */
-.bookcard .cover{ width:60px; height:90px; padding:6px 5px; }
-.bookcard .cover .ct{ font-size:8.5px; }
-.bookcard .cover .ca{ font-size:6px; }
-.bookcard .cover .glyph{ font-size:38px; }
-.bookcard .meta{ flex:1 1 auto; min-width:0; display:block; }
-.bookcard .title{ display:block; font-size:calc(18px * var(--book-title-scale)); font-weight:700;
+   at once. Scoped to these two rows only; other screens keep the compact
+   cover. .archivedcard (Books Previously Considered) shares every one of
+   these rules so it reads as the same list, just with a Reactivate button
+   instead of the tap-to-vote affordance. */
+.bookcard .cover, .archivedcard .cover{ width:60px; height:90px; padding:6px 5px; }
+.bookcard .cover .ct, .archivedcard .cover .ct{ font-size:8.5px; }
+.bookcard .cover .ca, .archivedcard .cover .ca{ font-size:6px; }
+.bookcard .cover .glyph, .archivedcard .cover .glyph{ font-size:38px; }
+.bookcard .meta, .archivedcard .meta{ flex:1 1 auto; min-width:0; display:block; }
+.bookcard .title, .archivedcard .title{ display:block; font-size:calc(18px * var(--book-title-scale)); font-weight:700;
   line-height:1.28; letter-spacing:-.15px; }
-.bookcard .author{ font-size:16px; color:var(--ink-2); margin-top:3px; }
-.bookcard .facts{ font-size:14px; color:var(--ink-3); margin-top:4px; }
+.bookcard .author, .archivedcard .author{ font-size:16px; color:var(--ink-2); margin-top:3px; }
+.bookcard .facts, .archivedcard .facts{ font-size:14px; color:var(--ink-3); margin-top:4px; }
 .bookcard .nomby{ font-size:14px; color:var(--ink-3); margin-top:8px; }
 .bookcard .mine{
   display:inline-block; font-size:11px; font-weight:700; letter-spacing:.7px;
@@ -588,6 +591,18 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   padding:3px 7px; border-radius:4px; margin-top:7px;
 }
 .chev{ flex:0 0 auto; color:var(--ink-3); }
+
+/* Same card chrome as .bookcard, but block-level so a full-width Reactivate
+   button can sit below the cover+title row instead of beside it — .bookcard
+   itself is a flex row, which can't stack a second element under the text. */
+.archivedcard{
+  background:var(--card); border-radius:var(--r-md); padding:9px 14px 12px 15px;
+  box-shadow:var(--shadow); animation:pop .3s cubic-bezier(.32,.72,0,1) both;
+}
+.archivedcard .bookcardlink{
+  display:flex; align-items:center; gap:14px; width:100%; text-align:left;
+  background:none; padding:0;
+}
 
 .field{ margin-bottom:17px; }
 .field label{ display:block; font-size:12.5px; font-weight:600;
@@ -780,6 +795,12 @@ const CONFIG = {
   // without new suggestions), but real headroom instead of a few weeks.
   zeroVoteStreakToArchive: 4,
   shortlistMissesToArchive: 8,
+  // Organizer decision, 2026-09-03: a book scoring this many approvals or
+  // fewer is culled the same night, no streak required. Deliberately more
+  // aggressive than the two thresholds above — those exist for books with
+  // *some* support that still never quite make the cut; this is for books
+  // that plainly didn't land. Never fires on a shortlisted book regardless.
+  lowVoteCullMax: 1,
 };
 
 /* Supabase project. The anon/publishable key is meant to be public — it ships
@@ -1198,16 +1219,23 @@ async function closeRanked(){
   render();
 }
 
-/** Books that have gone cold — the rule is config, not hard-coded. */
+/** Books that have gone cold — the rule is config, not hard-coded. A
+    shortlisted book is never queued regardless of any of the counts below —
+    it's actively part of tonight's vote, archiving it the same night it's
+    on the ballot would make no sense. */
 function buildArchiveQueue(){
   const t = approvalTally();
   const madeShortlist = new Set(M().shortlistIds || []);
   return M().candidateIds.map(id => {
+    if (madeShortlist.has(id)) return null;
     const b = book(id);
-    const zeros  = (t[id] === 0) ? b.zeroVoteStreak + 1 : 0;
-    const misses = madeShortlist.has(id) ? 0 : b.shortlistMisses + 1;
+    const votes  = t[id];
+    const zeros  = (votes === 0) ? b.zeroVoteStreak + 1 : 0;
+    const misses = b.shortlistMisses + 1;
     let reason = null;
-    if (zeros  >= CONFIG.zeroVoteStreakToArchive)
+    if (votes <= CONFIG.lowVoteCullMax)
+      reason = votes === 0 ? 'Got no votes at the last meeting' : 'Got only 1 vote at the last meeting';
+    else if (zeros  >= CONFIG.zeroVoteStreakToArchive)
       reason = `No interest at ${zeros} meetings running`;
     else if (misses >= CONFIG.shortlistMissesToArchive)
       reason = `Missed the shortlist ${misses} meetings running`;
@@ -1496,6 +1524,7 @@ function memberLobby(){
   if (s === 'nominate') return memberNominate();
   if (s === 'schedule') return memberSchedule();
   if (s === 'previous') return memberPreviousBooks();
+  if (s === 'considered') return memberPreviouslyConsidered();
   return memberHome();
 }
 
@@ -1504,6 +1533,7 @@ function memberHome(){
   const active = STORE.books.filter(b => b.status === 'active');
   const mine = active.filter(b => b.byToken === me.token);
   const cur = STORE.currentBookId ? book(STORE.currentBookId) : null;
+  const archived = STORE.books.filter(b => b.status === 'archived');
   const c = STORE.club;
   const days = Math.round((new Date(c.date + 'T00:00:00') - new Date().setHours(0,0,0,0)) / 864e5);
 
@@ -1557,6 +1587,15 @@ function memberHome(){
         <span class="chev">${CHEV}</span>
       </button>
 
+      <button class="tile" id="t-considered">
+        <span class="ic"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/><path d="m3 3 18 18" opacity=".0"/><circle cx="18.5" cy="18.5" r="4"/><path d="M17 18.5h3"/></svg></span>
+        <span class="meta">
+          <span class="tt">Books previously considered</span>
+          <div class="td">${archived.length ? `${plural(archived.length,'book','books')} didn't get enough votes — vouch for one to bring it back` : 'Nothing here yet'}</div>
+        </span>
+        <span class="chev">${CHEV}</span>
+      </button>
+
       <div class="statusline">
         <span class="dot breathe"></span>
         ${M().phase === 'lobby' ? 'Voting hasn\'t opened yet' : 'Voting is in progress'}
@@ -1567,6 +1606,7 @@ function memberHome(){
   $('#t-books').onclick = () => goto('books');
   $('#t-previous').onclick = () => goto('previous');
   $('#t-schedule').onclick = () => goto('schedule');
+  $('#t-considered').onclick = () => goto('considered');
 }
 
 function memberShelf(){
@@ -1703,6 +1743,55 @@ function memberPreviousBooks(){
   $('#pb-back').onclick = () => goto('home');
 }
 
+/** Books culled for low votes (buildArchiveQueue, publish_results) — a
+    member can vouch for one and put it straight back on the table. No
+    passcode: reactivating is exactly as low-stakes as suggesting a book in
+    the first place (reactivate_book, supabase/schema.sql). This does NOT
+    show books the organizer archived by hand for some other reason via the
+    admin console's own toggle — same underlying `archived` status, but
+    that path stays organizer-only there. */
+function memberPreviouslyConsidered(){
+  const arch = STORE.books.filter(b => b.status === 'archived')
+    .sort((a,b) => new Date(b.archivedAt || 0) - new Date(a.archivedAt || 0));
+
+  vp().innerHTML = `${practiceBar()}${orgBar()}
+    <header class="appbar">
+      <button class="nav-btn" id="pc-back">${BACK}</button>
+      <h1>Books Previously Considered</h1>
+      <div class="sub">Didn't get enough votes — bring one back if you'd vouch for it</div>
+    </header>
+    <div class="body">
+      ${arch.length ? `<div class="booklist">
+        ${arch.map((b,i) => `
+          <div class="archivedcard" style="animation-delay:${i*30}ms">
+            <button class="bookcardlink" data-id="${b.id}">
+              ${coverHTML(b)}
+              <span class="meta">
+                <span class="title">${esc(b.title)}</span>
+                ${b.author ? `<div class="author">${esc(b.author)}</div>` : ''}
+                ${bookFacts(b) ? `<div class="facts">${esc(bookFacts(b))}</div>` : ''}
+                ${b.archiveReason ? `<div class="facts" style="margin-top:2px">${esc(b.archiveReason)}</div>` : ''}
+              </span>
+              <span class="chev">${CHEV}</span>
+            </button>
+            <button class="btn btn-outline btn-sm" style="width:100%;margin-top:10px" data-reactivate="${b.id}">Reactivate</button>
+          </div>`).join('')}
+      </div>` : `<div class="lockcard">Nothing here yet — every book on the shelf is still in the running.</div>`}
+    </div>`;
+
+  $('#pc-back').onclick = () => goto('home');
+  $$('[data-id]').forEach(el => el.onclick = () => goto('detail', el.dataset.id));
+  $$('[data-reactivate]').forEach(el => el.onclick = async () => {
+    const b = book(el.dataset.reactivate);
+    const { error } = await supa.rpc('reactivate_book', { p_book_id: b.id });
+    if (error){ toast('Could not reactivate — try again'); return; }
+    b.status = 'active'; b.archiveReason = null; b.archivedAt = null;
+    b.zeroVoteStreak = 0; b.shortlistMisses = 0;
+    toast(`${b.title} is back on the table`);
+    memberPreviouslyConsidered();
+  });
+}
+
 function memberBookDetail(){
   const b = book(nav().bookId);
   if (!b) return goto('books');
@@ -1726,14 +1815,28 @@ function memberBookDetail(){
           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2H2v10h10V9"/><path d="M8.5 1.5H12.5V5.5"/><path d="M12.5 1.5 6.5 7.5"/></svg>
         </a>` : ''}
         <p class="desc">${b.description ? esc(b.description) : 'No description found yet — the organizer can add one.'}</p>
+        ${b.status === 'archived' ? `
+          <div class="helpnote" style="margin-top:2px">${esc(b.archiveReason || "Didn't get enough votes last time")}</div>
+          <button class="btn btn-primary btn-sm" id="d-reactivate" style="width:100%;margin-top:12px">Reactivate</button>
+        ` : ''}
         <div class="divider"></div>
         <div class="stepnote">
-          Every book on this list goes into the next meeting's vote.
-          Nothing here is ranked yet.
+          ${b.status === 'archived'
+            ? "This book isn't on the table right now — reactivate it if you'd like the club to consider it again."
+            : "Every book on this list goes into the next meeting's vote. Nothing here is ranked yet."}
         </div>
       </div>
     </div>`;
-  $('#d-back').onclick = () => goto('books');
+  $('#d-back').onclick = () => goto(b.status === 'archived' ? 'considered' : 'books');
+  const reactivateBtn = $('#d-reactivate');
+  if (reactivateBtn) reactivateBtn.onclick = async () => {
+    const { error } = await supa.rpc('reactivate_book', { p_book_id: b.id });
+    if (error){ toast('Could not reactivate — try again'); return; }
+    b.status = 'active'; b.archiveReason = null; b.archivedAt = null;
+    b.zeroVoteStreak = 0; b.shortlistMisses = 0;
+    toast(`${b.title} is back on the table`);
+    goto('books');
+  };
 }
 
 function memberNominate(){
@@ -2857,9 +2960,15 @@ function adminHistory(el){
       <h3>Meeting record</h3>
       <div class="subnote">Each finished meeting writes a readable record — date, turnout, both rounds, winner, archives. Stored here first; pushing it to a Google Doc is a later add-on that nothing depends on.</div>
     </div>`;
-  $$('[data-revive]').forEach(e => e.onclick = () => {
+  $$('[data-revive]').forEach(e => e.onclick = async () => {
     const b = book(e.dataset.revive);
-    b.status = 'active'; b.archiveReason = null; b.zeroVoteStreak = 0; b.shortlistMisses = 0;
+    // Was local-only before (never called Supabase) — a refresh or another
+    // member's phone would never see the revive. Same reactivate_book RPC
+    // the member-facing "Books previously considered" screen uses now.
+    const { error } = await supa.rpc('reactivate_book', { p_book_id: b.id });
+    if (error){ toast('Could not revive — try again'); return; }
+    b.status = 'active'; b.archiveReason = null; b.archivedAt = null;
+    b.zeroVoteStreak = 0; b.shortlistMisses = 0;
     toast(`${b.title} is back on the table`); renderAdmin();
   });
 }

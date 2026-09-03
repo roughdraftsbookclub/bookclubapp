@@ -50,21 +50,29 @@ check('B1 clean cutoff yields no tie', !sl.tie);
 check('B2 shortlist lands inside the window',
   sl.list.length>=CONFIG.shortlistFloor&&sl.list.length<=CONFIG.shortlistMax, 'got '+sl.list.length);
 
-// ---- C. archiving respects the 2-strike rule ---------------------------
+// ---- C. archiving: 0-1 votes cull same-night; the streak rules cover ----
+// ---- books with modest-but-insufficient support instead -----------------
+// Organizer decision, 2026-09-03: a single 0-1-vote night is now enough to
+// archive a book (was: 4 consecutive zero-vote meetings). d0/d1 are the
+// shortlist (1 vote each, from ballot x) — must never be queued even though
+// they'd otherwise qualify. d2 gets 2 votes (ballots y+z) and a clean
+// history, so it should survive on the old streak rules. d3 gets exactly 1
+// vote and isn't shortlisted, so it should be queued immediately.
 STORE.meeting=newMeeting();
-M().approvalBallots={ x:[d[0],d[1]] };          // every other book scores zero
+M().approvalBallots={ x:[d[0],d[1]], y:[d[2],d[3]], z:[d[2]] };
 M().shortlistIds=[d[0],d[1]];
 const q=buildArchiveQueue();
 console.log('\nC. Archive queue: '+q.length+' of '+M().candidateIds.length+' books');
 check('C1 every entry cites a threshold actually reached',
-  q.every(a=>a.zeros>=CONFIG.zeroVoteStreakToArchive||a.misses>=CONFIG.shortlistMissesToArchive));
-check('C2 a book on its FIRST bad night is never archived for zero votes',
-  q.filter(a=>/No interest/.test(a.reason)).every(a=>a.zeros>=2));
+  q.every(a=>/no votes|only 1 vote/i.test(a.reason)
+    ||a.zeros>=CONFIG.zeroVoteStreakToArchive||a.misses>=CONFIG.shortlistMissesToArchive));
+check('C2 a book with 0 or 1 votes is archived on its very first bad night',
+  q.some(a=>a.id===d[3]&&/only 1 vote/i.test(a.reason))
+    && q.some(a=>approvalTally()[a.id]===0&&/no votes/i.test(a.reason)&&a.zeros===1));
 check('C3 shortlisted books are never queued', q.every(a=>!M().shortlistIds.includes(a.id)));
-const spared=M().candidateIds.filter(id=>!q.some(a=>a.id===id)&&approvalTally()[id]===0);
-check('C4 zero-vote books with a clean history survive the night', spared.length>0,
-  'nothing spared — rule is too aggressive');
-console.log('   archived: '+q.length+', spared despite zero votes: '+spared.length);
+check('C4 a book with 2+ votes and a clean history survives the night',
+  !q.some(a=>a.id===d[2]));
+console.log('   archived: '+q.length);
 q.slice(0,3).forEach(a=>console.log('     '+book(a.id).title+' — '+a.reason));
 
 // ---- D. end to end -----------------------------------------------------

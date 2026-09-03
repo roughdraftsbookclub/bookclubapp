@@ -568,6 +568,28 @@ end;
 $$;
 grant execute on function toggle_book_archived(text, text) to anon;
 
+-- Any member can put a culled book back on the table, no passcode — same
+-- trust model as suggesting a book or claiming a host slot. Deliberately
+-- narrower than toggle_book_archived (which stays organizer-only): this
+-- only ever moves archived -> active, nothing else.
+create or replace function reactivate_book(p_book_id text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update books set
+    status = 'active',
+    archive_reason = null,
+    archived_at = null,
+    zero_vote_streak = 0,
+    shortlist_misses = 0
+  where id = p_book_id and status = 'archived';
+end;
+$$;
+grant execute on function reactivate_book(text) to anon;
+
 -- Real deletion, for mistaken entries rather than books the club just
 -- didn't vote for (that's what archiving is for). Restricted to books that
 -- were never current or read — deleting real club history should be hard,
