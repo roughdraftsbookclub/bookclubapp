@@ -393,11 +393,19 @@ organizer passcode checked inside a database function
    `STORE`, which doesn't exist anymore now that state lives in a shared
    database. `tests/shortlist.js` and `tests/archive_sim.js` cover the same
    ground (the fuzzed scenarios) without touching real data.
-5. **`expected_voters` has no UI and defaults to 9** (`supabase/schema.sql`).
-   It only drives the "X of Y voted" progress display — nothing is gated by
-   it — but with a turnout that doesn't match, the count reads oddly (e.g.
-   "11 of 9 voted"). For now, set it per meeting directly in SQL:
-   `update meetings set expected_voters = N where is_current = true;`
+5. **Resolved: `expected_voters` has a real control** — the "Members present
+   tonight" panel on the organizer's Meeting tab. Type the headcount straight
+   in, or nudge it with −/+; either way it writes through
+   `set_expected_voters` and every "x of y voted" counter on every phone
+   follows via the `meetings` realtime subscription. It still gates nothing —
+   it drives the progress display only, plus a quiet warning when ballots
+   cast exceed it. Two things worth knowing before touching this code:
+   `parseAttendance()` is deliberately pure and unit-tested (`tests/engine.js`
+   E1-E10) because a bad parse would put a wrong denominator on ten phones
+   for the whole meeting; and typing is held in `attendanceDraft` rather than
+   committed per keystroke, because **every ballot that lands re-renders the
+   whole admin panel** — without the draft the number gets wiped mid-typing,
+   exactly when votes are arriving. Commit is on Enter or blur only.
 6. Later, non-blocking: feed the public club site's book lists; append a
    human-readable meeting record to a Google Doc. Proven manually for the
    first real meeting (2026-08-13) — pulled the actual result JSON from
@@ -413,7 +421,7 @@ regex and run them headlessly — no build, no test framework.
 
 ```
 node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
-node tests/engine.js     # 12 — tally, archiving, end-to-end meeting
+node tests/engine.js     # 22 — tally, archiving, typed attendance, end-to-end
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
 node tests/lookup.js     # 38 — Open Library parsing/failure modes, edition
                           #      filtering, ISBN-13->10 conversion
@@ -423,7 +431,7 @@ node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
 
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
-`buildAmazonLink`, or `suggestionWindowState`, run these. The regexes in the
+`buildAmazonLink`, `parseAttendance`, or `suggestionWindowState`, run these. The regexes in the
 harnesses are brittle by design — if extraction fails they throw loudly
 rather than silently testing nothing.
 

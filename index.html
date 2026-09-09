@@ -425,10 +425,21 @@ input,textarea{font:inherit;color:inherit}
   display:grid; place-items:center; border:none; line-height:1;
 }
 .stepbtn:disabled{ opacity:.32; }
+/* Typed, not just tappable: going 9 -> 14 shouldn't be five taps. Same size
+   and weight as the old read-only value so the panel still reads as a big
+   number at arm's length. text + inputmode="numeric" rather than
+   type="number" — it gets the numeric keypad on a phone either way, but
+   keeps setSelectionRange working so focus can be restored after a
+   re-render (see attendanceDraft). */
 .stepperval{
-  flex:1 1 auto; text-align:center; font-family:var(--serif);
-  font-size:34px; font-weight:700; color:var(--ink);
+  flex:1 1 auto; width:100%; min-width:0; text-align:center;
+  font-family:var(--serif); font-size:34px; font-weight:700; color:var(--ink);
+  background:#FBFAF8; border:1px solid var(--hair); border-radius:var(--r-md);
+  padding:6px 4px; outline:none; -moz-appearance:textfield;
 }
+.stepperval:focus{ border-color:var(--gold); background:#fff; }
+.stepperval::-webkit-outer-spin-button,
+.stepperval::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
 
 .control{
   width:100%; background:#FBFAF8; border:1px solid var(--hair); border-radius:var(--r-sm);
@@ -1112,6 +1123,18 @@ function runIRV(ballots, candidateIds){
    ========================================================================== */
 const M = () => STORE.meeting;
 const book = id => STORE.books.find(b => b.id === id);
+/** What the organizer typed into the attendance field -> a real headcount,
+    or null meaning "don't write anything, just put the old number back".
+    Clamped to the same 1-30 range the -/+ buttons enforce, so a fat-fingered
+    "144" can't put "3 of 144 voted" on ten phones. Pure and separate from
+    the DOM because this number drives every counter in the app. */
+function parseAttendance(raw, current){
+  const n = parseInt(String(raw ?? '').trim(), 10);
+  if (!Number.isFinite(n)) return null;
+  const clamped = Math.max(1, Math.min(30, n));
+  return clamped === current ? null : clamped;
+}
+
 const approvalCount = () => Object.keys(M().approvalBallots).length;
 const rankCount     = () => Object.keys(M().rankBallots).length;
 
@@ -2488,6 +2511,13 @@ function renderAdmin(){
   if (STORE.adminTab === 'history') adminHistory(b);
 }
 
+/** Holds what the organizer is part-way through typing into the attendance
+    field, null when they aren't. Every ballot that lands re-renders this
+    whole panel, so without a draft the number would be wiped mid-keystroke
+    exactly when votes are coming in — which is precisely when attendance
+    gets set. Same pattern as editingBookId / claimingScheduleId. */
+let attendanceDraft = null;
+
 function adminMeeting(el){
   const m = M();
   const voted = m.phase === 'ranked' ? rankCount() : approvalCount();
@@ -2620,10 +2650,12 @@ function adminMeeting(el){
       <h3>Members present tonight</h3>
       <div class="stepperrow">
         <button class="stepbtn" id="att-minus" ${m.expectedVoters <= 1 ? 'disabled' : ''}>−</button>
-        <span class="stepperval">${m.expectedVoters}</span>
+        <input class="stepperval" id="att-input" type="text" inputmode="numeric"
+               pattern="[0-9]*" maxlength="2" aria-label="Members present tonight"
+               value="${attendanceDraft ?? m.expectedVoters}">
         <button class="stepbtn" id="att-plus" ${m.expectedVoters >= 30 ? 'disabled' : ''}>+</button>
       </div>
-      <div class="subnote" style="margin-top:8px">Drives the "of ${m.expectedVoters}" count everyone sees. Change it any time, including mid-vote.</div>
+      <div class="subnote" style="margin-top:8px">Type the headcount or use −/+. Drives the "of ${m.expectedVoters}" count everyone sees. Change it any time, including mid-vote.</div>
       ${attWarn}
     </div>
     <div class="panel">
@@ -2671,8 +2703,39 @@ function adminMeeting(el){
     });
     if (error){ m.expectedVoters = prev; toast('Could not update — try again'); renderAdmin(); }
   };
-  on('#att-minus', () => { if (m.expectedVoters > 1) setAttendance(m.expectedVoters - 1); });
-  on('#att-plus',  () => { if (m.expectedVoters < 30) setAttendance(m.expectedVoters + 1); });
+  on('#att-minus', () => { attendanceDraft = null; if (m.expectedVoters > 1) setAttendance(m.expectedVoters - 1); });
+  on('#att-plus',  () => { attendanceDraft = null; if (m.expectedVoters < 30) setAttendance(m.expectedVoters + 1); });
+
+  const attInput = $('#att-input');
+  if (attInput){
+    // Typing only updates the draft — never re-renders, or the field would
+    // fight the organizer for the caret.
+    attInput.oninput = () => {
+      attInput.value = attInput.value.replace(/\D/g, '');
+      attendanceDraft = attInput.value;
+    };
+    const commit = () => {
+      const n = parseAttendance(attendanceDraft, m.expectedVoters);
+      attendanceDraft = null;
+      // Blank, unparseable, or unchanged: just restore what's on screen.
+      // Deliberately not renderAdmin() here — setAttendance re-renders and
+      // destroys this input, which re-fires blur, which would land back in
+      // commit. Writing .value directly keeps that loop closed.
+      if (n === null){ attInput.value = m.expectedVoters; return; }
+      setAttendance(n);
+    };
+    attInput.onblur = commit;
+    attInput.onkeydown = e => {
+      if (e.key === 'Enter'){ e.preventDefault(); attInput.blur(); }
+      if (e.key === 'Escape'){ attendanceDraft = null; attInput.blur(); }
+    };
+    // A vote landing mid-type rebuilds this panel; put the caret back.
+    if (attendanceDraft !== null){
+      attInput.focus();
+      const end = attInput.value.length;
+      try { attInput.setSelectionRange(end, end); } catch {}
+    }
+  }
   on('#a-copy', () => {
     const url = 'https://' + $('#a-link').textContent.trim();
     if (navigator.clipboard) navigator.clipboard.writeText(url);

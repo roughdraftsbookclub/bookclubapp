@@ -22,10 +22,11 @@ const code=[
   grab(/function approvalTally\(\)\{[\s\S]*?\r?\n\}/,'approvalTally'),
   grab(/function computeShortlist\(\)\{[\s\S]*?\r?\n\}/,'computeShortlist'),
   grab(/function buildArchiveQueue\(\)\{[\s\S]*?\r?\n\}/,'buildArchiveQueue'),
+  grab(/function parseAttendance\([\s\S]*?\r?\n\}/,'parseAttendance'),
 ].join('\n')+`
-return {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue};`;
+return {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue,parseAttendance};`;
 const A=new Function('STORE','M','book',code)(STORE,M,book);
-const {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue}=A;
+const {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue,parseAttendance}=A;
 STORE.books=seedBooks();
 
 const newMeeting=()=>({id:'mt1',date:'2026-08-08',isPractice:false,phase:'lobby',
@@ -90,6 +91,23 @@ check('C5 buildArchiveQueue survives a candidate whose book was deleted',
   !threw, threw && threw.message);
 check('C5b the deleted candidate is not queued for archiving',
   !q2.some(a=>a.id==='bk-deleted-since'));
+
+// ---- E. typed attendance ------------------------------------------------
+// The organizer types the headcount before the vote; it drives every
+// "x of y voted" counter on every phone, so a bad parse is visible all night.
+// null means "don't write anything, put the old number back".
+console.log('');
+check('E1 a typed number is accepted', parseAttendance('12', 11) === 12);
+check('E2 whitespace is tolerated', parseAttendance('  9 ', 11) === 9);
+check('E3 above the range clamps to 30', parseAttendance('99', 11) === 30);
+check('E4 below the range clamps to 1', parseAttendance('0', 11) === 1);
+check('E5 negatives clamp rather than invert', parseAttendance('-4', 11) === 1);
+check('E6 blank is a no-op, not a zero', parseAttendance('', 11) === null);
+check('E7 letters are a no-op, not NaN', parseAttendance('abc', 11) === null);
+check('E8 null draft is a no-op', parseAttendance(null, 11) === null);
+check('E9 re-entering the same number writes nothing', parseAttendance('11', 11) === null);
+check('E10 a clamped value equal to current still writes nothing',
+  parseAttendance('50', 30) === null);
 
 // ---- D. end to end -----------------------------------------------------
 STORE.meeting=newMeeting();
