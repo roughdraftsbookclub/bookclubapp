@@ -689,9 +689,14 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 }
 .hero .byline{ font-size:14px; color:var(--ink-2); }
 .hero .facts{ font-size:12.5px; color:var(--ink-3); margin-top:6px; }
+/* pre-line so a description written as paragraphs reads as paragraphs —
+   HTML would otherwise collapse the blank lines into a single space and
+   render the whole jacket blurb as one block. Safe against the real data:
+   of the 21 descriptions on the shelf, 8 carry blank-line breaks and none
+   carry lone mid-sentence newlines, which are what would wrap badly here. */
 .detail .desc{
   font-size:13.5px; color:var(--ink-2); line-height:1.6; text-align:left;
-  margin-top:16px;
+  margin-top:16px; white-space:pre-line;
 }
 .divider{ height:1px; background:var(--hair); margin:18px 0; }
 .bigjacket{
