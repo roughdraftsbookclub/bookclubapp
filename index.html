@@ -1229,6 +1229,10 @@ function buildArchiveQueue(){
   return M().candidateIds.map(id => {
     if (madeShortlist.has(id)) return null;
     const b = book(id);
+    // A candidate the organizer deleted mid-cycle is still in candidate_ids
+    // but gone from books. Skip it rather than dereferencing undefined —
+    // this used to throw here and take down publishing the results.
+    if (!b) return null;
     const votes  = t[id];
     const zeros  = (votes === 0) ? b.zeroVoteStreak + 1 : 0;
     const misses = b.shortlistMisses + 1;
@@ -2155,7 +2159,11 @@ function memberApproval(token){
           `<i class="pip ${i < picked.length ? 'on':''}"></i>`).join('')}</span>
       </div>
       <div class="grid">
-        ${M().candidateIds.map((id,i) => {
+        ${/* filter(book) guards a candidate_ids entry whose book was deleted
+              after the meeting row was created — book(id) is undefined and
+              every deref below it threw, blanking the whole ballot for
+              everyone, not just that card. */''}
+        ${M().candidateIds.filter(id => book(id)).map((id,i) => {
           const b = book(id), on = picked.includes(id);
           return `<button class="pickcard ${full && !on ? 'maxed':''}" data-id="${id}"
                     aria-pressed="${on}" style="animation-delay:${i*26}ms">

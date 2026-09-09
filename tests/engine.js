@@ -75,6 +75,22 @@ check('C4 a book with 2+ votes and a clean history survives the night',
 console.log('   archived: '+q.length);
 q.slice(0,3).forEach(a=>console.log('     '+book(a.id).title+' — '+a.reason));
 
+// ---- C5. a deleted candidate must not take the meeting down -------------
+// Caught live two days before a real meeting: candidate_ids still listed five
+// books the organizer had since deleted, so book(id) was undefined. Both the
+// approval grid and this function dereferenced it and threw, which blanks the
+// ballot for every member and later blocks publishing.
+STORE.meeting=newMeeting();
+M().candidateIds=[...M().candidateIds,'bk-deleted-since'];
+M().approvalBallots={ x:[d[0],d[1]] };
+M().shortlistIds=[d[0],d[1]];
+let threw=null, q2=[];
+try { q2=buildArchiveQueue(); } catch(e){ threw=e; }
+check('C5 buildArchiveQueue survives a candidate whose book was deleted',
+  !threw, threw && threw.message);
+check('C5b the deleted candidate is not queued for archiving',
+  !q2.some(a=>a.id==='bk-deleted-since'));
+
 // ---- D. end to end -----------------------------------------------------
 STORE.meeting=newMeeting();
 let seed=7; const rnd=()=>(seed=(seed*1103515245+12345)>>>0)/4294967296;

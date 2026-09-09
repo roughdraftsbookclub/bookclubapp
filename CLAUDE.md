@@ -413,7 +413,7 @@ regex and run them headlessly — no build, no test framework.
 
 ```
 node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
-node tests/engine.js     # 10 — tally, archiving, end-to-end meeting
+node tests/engine.js     # 12 — tally, archiving, end-to-end meeting
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
 node tests/lookup.js     # 38 — Open Library parsing/failure modes, edition
                           #      filtering, ISBN-13->10 conversion
@@ -456,6 +456,18 @@ rather than silently testing nothing.
   night's ballot with no error, no toast, nothing. A phone backgrounding
   right after "Add" is enough to lose an unawaited request. Every write now
   awaits its result and tells the user if it failed.
+- **`candidate_ids` is a frozen snapshot and drifts away from `books`.** The
+  meeting row is created at publish time and its candidate array is only ever
+  appended to (`add_candidate_if_lobby`). Books deleted or archived after that
+  stay on the ballot: archived ones render as fully votable (undoing a cull),
+  and deleted ones made `book(id)` undefined, which threw inside the approval
+  grid's template literal — blanking the ballot for *every* member, not just
+  that card — and again in `buildArchiveQueue()` when publishing. Caught two
+  days before the 2026-09-10 meeting, with five deleted and eight archived
+  books still listed. Both paths now skip candidates with no book
+  (`tests/engine.js` C5), but the guard only prevents the crash: if the shelf
+  has changed since the meeting row was created, reset the array —
+  `supabase/fix_current_meeting_ballot.sql`.
 - **`nextClubMeeting()` needs to compare dates, not timestamps.** It used to
   check `secondThursday < new Date()`, which is true for the entire evening
   of the meeting's own day (not just after it) — so from about 12:01am
