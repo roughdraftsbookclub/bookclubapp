@@ -284,6 +284,7 @@ declare
   v_meeting  meetings%rowtype;
   v_prev_id  text;
   v_entry    record;
+  v_next_id  uuid;          -- schedule.id is uuid; text here breaks the = below
 begin
   if not check_organizer_code(p_code) then
     raise exception 'wrong organizer code';
@@ -298,7 +299,8 @@ begin
 
   if v_meeting.is_practice then
     -- Practice runs discard everything (CLAUDE.md) — just open the next
-    -- real meeting with the shelf as it stands.
+    -- real meeting with the shelf as it stands. Deliberately does NOT roll
+    -- the club's front page: a practice run must not move the real calendar.
     insert into meetings (candidate_ids, expected_voters)
       select array_agg(id), v_meeting.expected_voters from books where status = 'active';
     return;
@@ -332,13 +334,31 @@ begin
   -- to the earliest still-undecided schedule row. Silently a no-op if the
   -- schedule hasn't been seeded that far ahead yet; publishing a result
   -- should never fail just because nobody's planned next spring.
-  update schedule
-     set book_id = p_winner_id, provenance = 'voted'
-   where id = (
-     select id from schedule
-      where book_id is null and meeting_date is not null
-      order by sort_index asc limit 1
-   );
+  select id into v_next_id
+    from schedule
+   where book_id is null and meeting_date is not null
+   order by sort_index asc limit 1;
+
+  if v_next_id is not null then
+    update schedule
+       set book_id = p_winner_id, provenance = 'voted'
+     where id = v_next_id;
+
+    -- ...and roll the member-facing home screen onto that same meeting, so
+    -- the front page stops advertising the meeting that just happened. The
+    -- schedule row is the authority for who's hosting; club is only what the
+    -- home screen reads. `time` isn't carried per-row because it doesn't
+    -- vary by host. A null host/location CLEARS rather than inherits — the
+    -- home screen omits those lines when empty, which is better than pairing
+    -- a new host's name with the last host's street address.
+    update club c set
+      date          = s.meeting_date,
+      host          = coalesce(s.host, ''),
+      location      = coalesce(s.location, ''),
+      location_note = coalesce(s.location_note, '')
+      from schedule s
+     where s.id = v_next_id and c.id = true;
+  end if;
 
   -- Next meeting's headcount starts as a copy of this one's — the common
   -- case is confirming it's still right, not entering it from scratch.
@@ -404,6 +424,8 @@ create table schedule (
   meeting_date  date,                      -- null only for a skipped month
   skip_reason   text,                      -- set only when meeting_date is null
   host          text,                      -- null = open slot, claimable by anyone
+  location      text,                      -- where this one is; rolled into club on publish
+  location_note text,
   book_id       text references books(id), -- book discussed at this meeting; null until known
   provenance    text check (provenance in ('voted','seed_pick')),
   created_at    timestamptz not null default now()

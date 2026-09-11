@@ -311,14 +311,22 @@ ballots:  id, meeting_id, token, phase (approval|ranked), book_ids[]
           meeting row, so RLS can reason about writes per-row
 club:     auto_date, date, time, host, location, location_note,
           current_book_id
-schedule: id, sort_index, meeting_date, skip_reason, host, book_id,
-          provenance (voted | seed_pick)
+schedule: id, sort_index, meeting_date, skip_reason, host, location,
+          location_note, book_id, provenance (voted | seed_pick)
           — one row per meeting, past or future; not to be confused with
           `meetings` (live voting state for whichever one is happening now).
           `sort_index` orders rows explicitly since a skipped month (like
           December) has no date to sort by. `publish_results` auto-attaches
           a winner to the earliest still-undecided row — a book is discussed
-          at the *next* meeting, not the one that picked it. Member-facing
+          at the *next* meeting, not the one that picked it — and **rolls the
+          `club` row onto that same meeting** (date/host/location), so the
+          home screen stops advertising the meeting that just happened.
+          `club` is only what the home screen reads; `schedule` is the
+          authority. An unclaimed host or unrecorded location **clears**
+          rather than inheriting: the home screen omits empty host/address
+          lines, which beats pairing a new host's name with the previous
+          host's street address. Practice runs deliberately skip the roll —
+          a dry run must not move the real calendar. Member-facing
           across two home tiles: "Meeting schedule" (`memberSchedule()`) is
           upcoming rows only, where an empty `host` slot is claimable by
           anyone (`claim_host_slot`, no passcode — same low-stakes pattern
