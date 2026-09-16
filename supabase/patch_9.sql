@@ -38,6 +38,14 @@ update schedule
    set location = '4803 Trent Woods Drive'
  where meeting_date = date '2026-09-10' and location is null;
 
+-- October is at Ken's. Organizer-supplied 2026-09-16; exact directions will
+-- come closer to the date and can overwrite location_note then.
+update schedule
+   set host          = 'Ken Wilkins',
+       location      = 'Middle Street',
+       location_note = 'Directions TBA closer to the meeting'
+ where meeting_date = date '2026-10-08';
+
 create or replace function publish_results(
   p_code           text,
   p_meeting_id     uuid,
@@ -145,7 +153,6 @@ update club c set
   from schedule s
  where c.id = true and s.meeting_date = date '2026-10-08';
 
--- Verify: the home screen should now read October 8, hosted by Ken Wilkins.
--- location will be blank until someone records Ken's address — blank is
--- deliberate, the alternative was David's address under Ken's name.
+-- Verify: expect 2026-10-08 | 7:00 PM | Ken Wilkins | Middle Street |
+-- Directions TBA closer to the meeting
 select date, time, host, location, location_note from club where id = true;
