@@ -387,9 +387,23 @@ organizer passcode checked inside a database function
    the suggestion flow, so those three fields are the only way to fix a
    pre-rewrite book by hand (`supabase/backfill_metadata.sql` backfilled most
    of them in bulk from Open Library; see below for the five it couldn't).
-   **Still fake:** "Import from the club page" (three hardcoded titles) and
-   `fuzzyMatch()`'s bulk-add (a made-up catalogue, not Open Library) — out
-   of scope for this pass, not part of the original stubbed-feature list.
+   **Resolved: adding a book is real, and the two fakes are gone.** "Add
+   books fast" (a made-up `CATALOGUE`, not Open Library) and "Import from the
+   club page" (three hardcoded titles) both only ever pushed into local
+   `STORE` — never persisted, the same class of bug as the old revive button.
+   Deleted rather than left wired to nothing. In their place: **paste an
+   Amazon link** (`parseAmazonISBN` → `lookupByISBN` → `add_book`). Three
+   things worth knowing before touching it:
+   - It **prefills a form the organizer corrects**, it does not add directly.
+     That isn't ceremony — checked live against four books already on the
+     shelf, Open Library dated *'Salem's Lot* to 1959 (it's 1975) and gave
+     page counts 25 and 21 off Amazon's for two others.
+   - The **ISBN-13 is computed** from the ISBN-10 (`isbn10to13`), never read
+     from OL's edition record, which lists the wrong counterpart for both
+     *Red Rising* and *Catch-22*.
+   - `add_book` **also appends to `candidate_ids`** when the lobby is open.
+     Inserting the row alone would put a book on the shelf that never reaches
+     the ballot — exactly the drift that blanked the September ballot.
 3. **Practice mode is disabled**, not wired. The old client-only
    `newMeeting(true)` swap doesn't make sense against one shared `is_current`
    meeting row — flipping it locally would either do nothing or, done naively,
@@ -414,7 +428,16 @@ organizer passcode checked inside a database function
    committed per keystroke, because **every ballot that lands re-renders the
    whole admin panel** — without the draft the number gets wiped mid-typing,
    exactly when votes are arriving. Commit is on Enter or blur only.
-6. Later, non-blocking: feed the public club site's book lists; append a
+6. **Resolved: the organizer console has a Schedule tab** (`adminSchedule()`)
+   — host, address and directions for *any* upcoming meeting, not just the
+   next one. The Meeting tab's club fields only ever reach the next meeting,
+   so setting an address three months out previously meant SQL.
+   `update_schedule_row` gained location/location_note in patch_10 (the old
+   signature is dropped first — Postgres treats a new parameter list as a new
+   overload, which would leave both callable and ambiguous via PostgREST),
+   and it rolls the `club` row too when the edited row *is* the meeting the
+   home page is currently showing, so the front page doesn't lag the calendar.
+7. Later, non-blocking: feed the public club site's book lists; append a
    human-readable meeting record to a Google Doc. Proven manually for the
    first real meeting (2026-08-13) — pulled the actual result JSON from
    Supabase and wrote it to a Doc by hand, not automated yet. Neither this
@@ -431,15 +454,17 @@ regex and run them headlessly — no build, no test framework.
 node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 22 — tally, archiving, typed attendance, end-to-end
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
-node tests/lookup.js     # 38 — Open Library parsing/failure modes, edition
-                          #      filtering, ISBN-13->10 conversion
+node tests/lookup.js     # 61 — Open Library parsing/failure modes, edition
+                          #      filtering, ISBN conversion both ways, and
+                          #      pulling an ISBN out of a pasted Amazon URL
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
 ```
 
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
-`buildAmazonLink`, `parseAttendance`, or `suggestionWindowState`, run these. The regexes in the
+`buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `parseAttendance`, or
+`suggestionWindowState`, run these. The regexes in the
 harnesses are brittle by design — if extraction fails they throw loudly
 rather than silently testing nothing.
 

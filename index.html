@@ -889,6 +889,39 @@ function isbn13to10(isbn13){
   return core + (check === 10 ? 'X' : String(check));
 }
 
+/* The other direction: ISBN-10 -> ISBN-13, always '978' + the first nine
+   digits + a fresh EAN-13 check digit (mod 10, alternating weights 1/3).
+   Deliberately COMPUTED rather than read from Open Library's edition record:
+   OL's isbn_13 field is not reliably the counterpart of the isbn_10 you
+   looked up. Checked live — the edition record for Red Rising's 034553980X
+   lists 9780345539786 and Catch-22's 1451626657 lists 9781451621174, neither
+   of which is that book's real ISBN-13. Arithmetic can't drift; their data
+   can. */
+function isbn10to13(isbn10){
+  if (!isbn10 || !/^\d{9}[\dXx]$/.test(isbn10)) return null;
+  const core = '978' + isbn10.slice(0, 9);
+  let sum = 0;
+  for (let i = 0; i < 12; i++) sum += Number(core[i]) * (i % 2 ? 3 : 1);
+  return core + String((10 - (sum % 10)) % 10);
+}
+
+/* Pull the ISBN-10 out of a pasted Amazon URL. Books live at /dp/<ISBN-10>
+   or /gp/product/<ISBN-10>; the ASIN *is* the ISBN-10 for print. Anything
+   else on Amazon (Kindle, non-books) carries a B0-style ASIN, which fails
+   the checksum below — so a wrong kind of link is rejected here rather than
+   silently adding a book with a meaningless identifier. */
+function parseAmazonISBN(url){
+  if (!url) return null;
+  const m = String(url).match(/\/(?:dp|gp\/product)\/([0-9][0-9Xx]{8}[0-9Xx])/);
+  if (!m) return null;
+  const raw = m[1].toUpperCase();
+  if (!/^\d{9}[\dX]$/.test(raw)) return null;
+  let sum = 0;                                  // mod-11 checksum, same as ISBN-10 proper
+  for (let i = 0; i < 9; i++) sum += (10 - i) * Number(raw[i]);
+  sum += raw[9] === 'X' ? 10 : Number(raw[9]);
+  return sum % 11 === 0 ? raw : null;
+}
+
 /* Amazon's /dp/ only resolves an ISBN-10 (it IS the ASIN for print books —
    Kindle editions carry their own, unrelated ASINs). Try direct, then a
    converted ISBN-13, then fall back to a real search URL — never a bare
@@ -1461,6 +1494,62 @@ async function fetchWorkDescription(workKey){
   } catch (e){
     return null;
   }
+}
+
+/**
+ * Everything Open Library knows about one specific ISBN-10, for the
+ * organizer's "add by Amazon link" form.
+ *
+ * Two requests, because neither alone is enough: search.json?q=isbn: resolves
+ * to the *work* (author, original publication year), while /isbn/.json is the
+ * *edition* (this printing's cover and page count). A third fetches the work
+ * description.
+ *
+ * Everything here is a SUGGESTION the organizer confirms — nothing is written
+ * from this directly. That isn't ceremony: OL's own data is wrong often
+ * enough to matter. Checked live against four books already on the shelf, it
+ * dated 'Salem's Lot to 1959 (it's 1975) and gave page counts 25 and 21 off
+ * Amazon's for two others. The ISBN-13 is computed from the ISBN-10 rather
+ * than read from the edition record for the same reason (isbn10to13).
+ */
+async function lookupByISBN(isbn10){
+  const out = { isbn: isbn10, isbn13: isbn10to13(isbn10), buy: amazonURL(isbn10) };
+  const grab = async url => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 9000);
+    try {
+      const r = await fetch(url, { signal: ac.signal, headers: OL_HEADERS })
+        .finally(() => clearTimeout(timer));
+      return r.ok ? await r.json() : null;
+    } catch (e){ return null; }
+  };
+
+  const [search, edition] = await Promise.all([
+    grab(`https://openlibrary.org/search.json?q=isbn:${encodeURIComponent(isbn10)}`
+       + `&fields=key,title,author_name,first_publish_year,number_of_pages_median&limit=1`),
+    grab(`https://openlibrary.org/isbn/${encodeURIComponent(isbn10)}.json`),
+  ]);
+
+  const doc = search && search.docs && search.docs[0];
+  // Title/author come from the work: an edition record can carry a subtitle
+  // ("Frankenstein; or, The Modern Prometheus") or a translated title, and
+  // the shelf wants the book, not the printing. Edition title is the fallback.
+  out.title  = (doc && doc.title) || (edition && edition.title) || '';
+  out.author = (doc && doc.author_name && doc.author_name[0]) || '';
+  out.year   = doc && doc.first_publish_year ? String(doc.first_publish_year) : '';
+  out.pages  = (edition && edition.number_of_pages)
+            || (doc && doc.number_of_pages_median) || '';
+
+  // Cover by numeric id, never by ISBN — the isbn/ path is rate-limited to
+  // 100 per 5 minutes per IP and every member's phone would be hitting it.
+  const coverId = edition && edition.covers && edition.covers.find(c => c > 0);
+  out.cover      = coverId ? olCover(`id/${coverId}`, 'M') : '';
+  out.coverLarge = coverId ? olCover(`id/${coverId}`, 'L') : '';
+
+  const workKey = (doc && doc.key) || (edition && edition.works && edition.works[0] && edition.works[0].key);
+  out.description = workKey ? await fetchWorkDescription(workKey) : null;
+  out.found = !!(out.title);
+  return out;
 }
 
 /* ==========================================================================
@@ -2503,7 +2592,7 @@ function renderAdmin(){
       </div>
     </div>
     <div class="tabbar">
-      ${['meeting','books','history'].map(t =>
+      ${['meeting','books','schedule','history'].map(t =>
         `<button data-tab="${t}" aria-pressed="${STORE.adminTab===t}">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}
     </div>
     <div class="body" id="admin-body"></div>`;
@@ -2511,9 +2600,10 @@ function renderAdmin(){
   $$('[data-tab]').forEach(el => el.onclick = () => { STORE.adminTab = el.dataset.tab; renderAdmin(); });
 
   const b = $('#admin-body');
-  if (STORE.adminTab === 'meeting') adminMeeting(b);
-  if (STORE.adminTab === 'books')   adminBooks(b);
-  if (STORE.adminTab === 'history') adminHistory(b);
+  if (STORE.adminTab === 'meeting')  adminMeeting(b);
+  if (STORE.adminTab === 'books')    adminBooks(b);
+  if (STORE.adminTab === 'schedule') adminSchedule(b);
+  if (STORE.adminTab === 'history')  adminHistory(b);
 }
 
 /** Holds what the organizer is part-way through typing into the attendance
@@ -2773,9 +2863,12 @@ function adminMeeting(el){
 
 }
 
-/* --- Books tab: bulk add with simulated fuzzy matching --------------------- */
-let pendingMatches = [];
+/* --- Books tab ------------------------------------------------------------ */
 let editingBookId = null;
+/** The looked-up book the organizer is reviewing before it goes on the shelf,
+    null when the panel is closed. Held outside the render so a realtime
+    refresh mid-review doesn't wipe what they're correcting. */
+let addBookDraft = null;
 
 function bookEditFormHTML(b){
   return `<div class="adminbook" style="display:block">
@@ -2809,25 +2902,56 @@ function bookEditFormHTML(b){
 }
 
 function adminBooks(el){
+  const d = addBookDraft;
   el.innerHTML = `
     <div class="panel">
-      <h3>Add books fast</h3>
-      <label class="flabel" for="bulk">Rough titles, one per line</label>
-      <textarea class="control" id="bulk" placeholder="endurance shackleton&#10;the wager grann&#10;piranesi"></textarea>
+      <h3>Add a book</h3>
+      <label class="flabel" for="b-url">Paste an Amazon link</label>
+      <input class="control" id="b-url" placeholder="https://www.amazon.com/dp/0141393394" value="${esc(d ? d.url : '')}">
       <div class="subnote" style="margin:9px 0 12px">
-        Matched against Open Library. Nothing is added until you confirm — if the
-        lookup is down you can still type a title and author by hand.
+        Pulls the edition's details off the link. Nothing is added until you
+        check them — the lookup is often a little wrong.
       </div>
-      <button class="btn btn-primary btn-sm" id="b-match">Find matches</button>
+      <button class="btn btn-primary btn-sm" id="b-lookup">Look it up</button>
     </div>
-    <div id="matches"></div>
-    <div class="panel">
-      <h3>Import from the club page</h3>
-      <input class="control" id="importurl" placeholder="https://roughdrafts.club/proposed" value="https://roughdrafts.club/proposed">
-      <div style="height:10px"></div>
-      <button class="btn btn-outline btn-sm" id="b-import">Scan page</button>
-      <div class="subnote" style="margin-top:10px">Pulls titles off the page and matches them. You review every one.</div>
-    </div>
+
+    ${d && d.loaded ? `<div class="panel" style="border:1px solid rgba(194,144,46,.45)">
+      <h3>Check before adding</h3>
+      ${d.found ? '' : `<div class="subnote" style="color:#7A5A16;margin-bottom:10px">
+        Nothing came back for that ISBN. The link is still good — fill in what
+        you know and add it anyway.</div>`}
+      <div class="adminbook" style="margin-bottom:12px">
+        ${coverHTML({ coverURL: d.cover, c1:'#1E3A5F', c2:'#0A1626', glyph:'📖', title:d.title, author:d.author }, 'md')}
+        <span class="meta"><span class="at">${esc(d.title || 'Untitled')}</span>
+          <div class="aa">${esc(d.author || 'Author unknown')}</div>
+          <div class="aa" style="margin-top:2px">ISBN ${esc(d.isbn)}${d.isbn13 ? ' · ' + esc(d.isbn13) : ''}</div></span>
+      </div>
+      <label class="flabel" for="n-title">Title</label>
+      <input class="control" id="n-title" value="${esc(d.title||'')}">
+      <div style="height:9px"></div>
+      <label class="flabel" for="n-author">Author</label>
+      <input class="control" id="n-author" value="${esc(d.author||'')}">
+      <div style="height:9px"></div>
+      <label class="flabel" for="n-year">Publish year <span style="font-weight:500;color:var(--ink-3)">the book's first, not this printing</span></label>
+      <input class="control" id="n-year" type="number" value="${esc(d.year||'')}">
+      <div style="height:9px"></div>
+      <label class="flabel" for="n-pages">Page count</label>
+      <input class="control" id="n-pages" type="number" value="${esc(d.pages||'')}">
+      <div style="height:9px"></div>
+      <label class="flabel" for="n-cover">Cover URL</label>
+      <input class="control" id="n-cover" value="${esc(d.cover||'')}">
+      <div style="height:9px"></div>
+      <label class="flabel" for="n-desc">Description</label>
+      <textarea class="control" id="n-desc" style="min-height:80px">${esc(d.description||'')}</textarea>
+      <div style="height:12px"></div>
+      <button class="btn btn-primary btn-sm" id="b-add">Add to the shelf</button>
+      <button class="btn btn-ghost btn-sm" id="b-cancel">Cancel</button>
+      <div class="subnote" style="margin-top:9px">
+        ${M().phase === 'lobby'
+          ? 'Voting hasn\'t opened, so this joins this month\'s ballot too.'
+          : 'Voting is already open — this waits for next month\'s ballot.'}
+      </div>
+    </div>` : ''}
     ${STORE.books.some(b => b.needsReview) ? `<div class="panel" style="background:rgba(194,144,46,.09);border:1px solid rgba(194,144,46,.3)">
       <h3 style="color:#7A5A16">Member suggestions to check — ${STORE.books.filter(b=>b.needsReview).length}</h3>
       ${STORE.books.filter(b => b.needsReview).map(b => `
@@ -2866,18 +2990,61 @@ function adminBooks(el){
         </div>`).join('')}
     </div>`;
 
-  $('#b-match').onclick = () => {
-    const lines = $('#bulk').value.split('\n').map(s => s.trim()).filter(Boolean);
-    if (!lines.length){ toast('Type a few titles first'); return; }
-    pendingMatches = lines.map(q => fuzzyMatch(q));
-    renderMatches();
+  $('#b-lookup').onclick = async () => {
+    const url = $('#b-url').value.trim();
+    const isbn = parseAmazonISBN(url);
+    if (!isbn){
+      toast('That link has no book ISBN in it — use the /dp/ one from the address bar');
+      return;
+    }
+    if (STORE.books.some(b => b.isbn === isbn)){
+      toast('That edition is already on the shelf');
+      return;
+    }
+    const btn = $('#b-lookup');
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Looking…';
+    const hit = await lookupByISBN(isbn);
+    addBookDraft = { ...hit, url, loaded: true };
+    renderAdmin();
   };
-  $('#b-import').onclick = () => {
-    pendingMatches = ['the heaven and earth grocery store','blood meridian mccarthy','lonesome dove']
-      .map(q => fuzzyMatch(q));
-    toast('Found 3 books on that page');
-    renderMatches();
-  };
+  $('#b-cancel') && ($('#b-cancel').onclick = () => { addBookDraft = null; renderAdmin(); });
+  $('#b-add') && ($('#b-add').onclick = async () => {
+    const title = $('#n-title').value.trim();
+    if (!title){ toast('A book needs a title'); return; }
+    const cover = $('#n-cover').value.trim();
+    const year = $('#n-year').value.trim(), pages = $('#n-pages').value.trim();
+    const [c1, c2] = FALLBACK[Math.floor(Math.random() * FALLBACK.length)];
+    const row = {
+      id: uid('bk'), title, author: $('#n-author').value.trim(),
+      isbn: addBookDraft.isbn, isbn13: addBookDraft.isbn13,
+      cover, coverLarge: cover ? cover.replace(/-M\.jpg$/, '-L.jpg') : '',
+      amazon: addBookDraft.buy, description: $('#n-desc').value.trim(),
+      pageCount: pages ? Number(pages) : null,
+      firstPublishYear: year ? Number(year) : null, c1, c2,
+    };
+    const { error } = await supa.rpc('add_book', {
+      p_code: STORE.organizerCode, p_id: row.id, p_title: row.title, p_author: row.author || null,
+      p_isbn: row.isbn || null, p_isbn13: row.isbn13 || null,
+      p_cover_url: row.cover || null, p_cover_large: row.coverLarge || null,
+      p_amazon: row.amazon || null, p_description: row.description || null,
+      p_page_count: row.pageCount, p_first_publish_year: row.firstPublishYear,
+      p_c1: c1, p_c2: c2,
+    });
+    if (error){ toast('Could not add it — try again'); return; }
+    STORE.books.push({
+      ...row, coverURL: cover || null, glyph: '📖', status: 'active',
+      addedAt: new Date().toISOString().slice(0,10), byToken: null, needsReview: false,
+      meetingsConsidered: 0, zeroVoteStreak: 0, shortlistMisses: 0, everShortlisted: false,
+      archiveReason: null, archivedAt: null,
+    });
+    // add_book appends to candidate_ids itself when the lobby is open; mirror
+    // it locally so the ballot count on this screen is right immediately.
+    if (M().phase === 'lobby' && !M().candidateIds.includes(row.id))
+      M().candidateIds = [...M().candidateIds, row.id];
+    addBookDraft = null;
+    toast(`${title} is on the table`);
+    renderAdmin();
+  });
   $$('[data-ok]').forEach(e => e.onclick = async () => {
     const b = book(e.dataset.ok);
     const { error } = await supa.rpc('confirm_book', { p_code: STORE.organizerCode, p_book_id: b.id });
@@ -2937,71 +3104,84 @@ function adminBooks(el){
   });
 }
 
-/* Stand-in for an Open Library lookup: token overlap against a small catalogue. */
-const CATALOGUE = [
-  ...SEED.map(([t,a]) => ({title:t, author:a})),
-  {title:'Shackleton', author:'Ranulph Fiennes'},
-  {title:'The Road', author:'Cormac McCarthy'},
-  {title:'Killers of the Flower Moon', author:'David Grann'},
-  {title:'Jonathan Strange & Mr Norrell', author:'Susanna Clarke'},
-];
-function fuzzyMatch(q){
-  const toks = q.toLowerCase().split(/\s+/).filter(w => w.length > 2);
-  let best = null, bestScore = 0;
-  CATALOGUE.forEach(c => {
-    const hay = (c.title + ' ' + c.author).toLowerCase();
-    const score = toks.filter(t => hay.includes(t)).length / Math.max(1, toks.length);
-    if (score > bestScore){ bestScore = score; best = c; }
-  });
-  return { query:q, match: bestScore >= .5 ? best : null, confidence: bestScore };
-}
+/** Which schedule row the organizer has open for editing, null when none. */
+let editingScheduleId = null;
 
-function renderMatches(){
-  const el = $('#matches');
-  if (!pendingMatches.length){ el.innerHTML = ''; return; }
-  el.innerHTML = `<div class="panel">
-    <h3>Confirm before adding</h3>
-    ${pendingMatches.map((m,i) => m.match ? `
-      <div class="matchrow">
-        <span class="meta">
-          <div class="mq">“${esc(m.query)}”</div>
-          <div class="mt">${esc(m.match.title)}</div>
-          <div class="ma">${esc(m.match.author)}</div>
-        </span>
-        <span class="conf ${m.confidence < .8 ? 'low':''}">${Math.round(m.confidence*100)}%</span>
-        <button class="iconbtn" data-drop="${i}"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg></button>
-      </div>` : `
-      <div class="matchrow miss">
-        <span class="meta"><div class="mq">“${esc(m.query)}”</div><div class="mt">No confident match</div>
-        <div class="ma">Add by hand or try more words</div></span>
-        <button class="iconbtn" data-drop="${i}"><svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1.5 1.5l11 11M12.5 1.5l-11 11"/></svg></button>
-      </div>`).join('')}
-    <div style="height:6px"></div>
-    <button class="btn btn-primary btn-sm" id="m-confirm">Add ${pendingMatches.filter(m=>m.match).length} to the table</button>
-  </div>`;
+/**
+ * The calendar, editable. The Meeting tab's club fields only ever reach the
+ * *next* meeting; this reaches any month, which is what it takes to set a
+ * host and address three months out without opening SQL.
+ */
+function adminSchedule(el){
+  const today = todayInClubTZ();
+  const rows = STORE.schedule.filter(r => !r.meetingDate || r.meetingDate >= today)
+    .sort((a,b) => a.sortIndex - b.sortIndex);
+  const c = STORE.club;
 
-  $$('[data-drop]').forEach(e => e.onclick = () => {
-    pendingMatches.splice(+e.dataset.drop,1); renderMatches();
-  });
-  $('#m-confirm').onclick = () => {
-    const pal = [['#1E3A5F','#0A1626'],['#8C3B2E','#3E1610'],['#2E5B44','#173226'],['#4A3C72','#221B3A']];
-    let n = 0;
-    pendingMatches.filter(m => m.match).forEach(m => {
-      if (STORE.books.some(b => b.title.toLowerCase() === m.match.title.toLowerCase())) return;
-      const [c1,c2] = pal[Math.floor(Math.random()*pal.length)];
-      STORE.books.push({
-        id: uid('bk'), title:m.match.title, author:m.match.author, c1, c2, glyph:'📖',
-        status:'active', addedAt:new Date().toISOString().slice(0,10), byToken:null,
-        meetingsConsidered:0, zeroVoteStreak:0, shortlistMisses:0, everShortlisted:false,
-        archiveReason:null, archivedAt:null,
-      });
-      n++;
+  const form = r => `
+    <div class="panel" style="border:1px solid rgba(194,144,46,.45)">
+      <h3>${r.meetingDate ? esc(prettyDate(r.meetingDate)) : 'Skipped month'}</h3>
+      <label class="flabel" for="s-host">Host</label>
+      <input class="control" id="s-host" value="${esc(r.host||'')}" placeholder="Open — anyone can claim it">
+      <div style="height:9px"></div>
+      <label class="flabel" for="s-loc">Address</label>
+      <input class="control" id="s-loc" value="${esc(r.location||'')}" placeholder="e.g. Middle Street">
+      <div style="height:9px"></div>
+      <label class="flabel" for="s-note">Directions / note</label>
+      <input class="control" id="s-note" value="${esc(r.locationNote||'')}" placeholder="e.g. Directions TBA">
+      <div style="height:12px"></div>
+      <button class="btn btn-primary btn-sm" data-save-sched="${r.id}">Save</button>
+      <button class="btn btn-ghost btn-sm" data-cancel-sched="1">Cancel</button>
+      ${r.meetingDate === c.date
+        ? `<div class="subnote" style="margin-top:9px">This is the meeting the home page is showing — saving updates it everywhere straight away.</div>`
+        : ''}
+    </div>`;
+
+  el.innerHTML = `
+    <div class="panel">
+      <h3>Upcoming meetings — ${rows.length}</h3>
+      <div class="subnote" style="margin-bottom:12px">
+        Tap one to set its host and address. The home page follows whichever
+        meeting is next; the rest wait their turn.
+      </div>
+      ${rows.map(r => editingScheduleId === r.id ? form(r) : `
+        <div class="adminbook" style="align-items:flex-start">
+          <span class="meta">
+            <span class="at">${r.meetingDate ? esc(prettyDate(r.meetingDate)) : esc(r.skipReason || 'No meeting')}</span>
+            <div class="aa">${r.host ? 'Hosted by ' + esc(r.host) : 'Host not claimed yet'}</div>
+            ${r.location ? `<div class="aa">${esc(r.location)}${r.locationNote ? ' · ' + esc(r.locationNote) : ''}</div>` : ''}
+            ${r.bookId && book(r.bookId) ? `<div class="aa" style="margin-top:2px">Reading ${esc(book(r.bookId).title)}</div>` : ''}
+          </span>
+          ${r.meetingDate === c.date ? '<span class="tag current">next</span>' : ''}
+          ${r.meetingDate ? `<button class="iconbtn" data-edit-sched="${r.id}" title="Edit">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 1.5 12.5 4.5 4.5 12.5 1.5 12.5 1.5 9.5Z"/></svg>
+          </button>` : ''}
+        </div>`).join('')}
+    </div>`;
+
+  $$('[data-edit-sched]').forEach(e => e.onclick = () => { editingScheduleId = e.dataset.editSched; renderAdmin(); });
+  $$('[data-cancel-sched]').forEach(e => e.onclick = () => { editingScheduleId = null; renderAdmin(); });
+  $$('[data-save-sched]').forEach(e => e.onclick = async () => {
+    const id = e.dataset.saveSched;
+    const r = STORE.schedule.find(x => x.id === id);
+    const host = $('#s-host').value.trim();
+    const location = $('#s-loc').value.trim();
+    const note = $('#s-note').value.trim();
+    const { error } = await supa.rpc('update_schedule_row', {
+      p_code: STORE.organizerCode, p_schedule_id: id,
+      p_meeting_date: r.meetingDate, p_skip_reason: r.skipReason || null,
+      p_host: host || null, p_location: location || null, p_location_note: note || null,
+      p_book_id: r.bookId || null, p_provenance: r.provenance || null,
     });
-    if (M().phase === 'lobby') M().candidateIds = STORE.books.filter(b => b.status==='active').map(b => b.id);
-    pendingMatches = [];
-    toast(n ? `${plural(n,'book','books')} on the table` : 'Already on the list');
-    renderAdmin();
-  };
+    if (error){ toast('Could not save — try again'); return; }
+    Object.assign(r, { host: host || null, location: location || null, locationNote: note || null });
+    // The RPC also rolls the club row when this is the meeting the home page
+    // is on; mirror that locally so the change shows without a reload.
+    if (r.meetingDate === STORE.club.date)
+      Object.assign(STORE.club, { host, location, locationNote: note });
+    editingScheduleId = null;
+    toast('Saved'); renderAdmin();
+  });
 }
 
 function adminHistory(el){
@@ -3203,6 +3383,7 @@ function scheduleRowFromRow(r){
   return {
     id: r.id, sortIndex: r.sort_index, meetingDate: r.meeting_date,
     skipReason: r.skip_reason, host: r.host, bookId: r.book_id, provenance: r.provenance,
+    location: r.location ?? null, locationNote: r.location_note ?? null,
   };
 }
 

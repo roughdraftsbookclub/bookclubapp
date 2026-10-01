@@ -4,6 +4,8 @@ const code=[src.match(/const olCover = [^\n]*/)[0],
             src.match(/const amazonURL = [^\n]*/)[0],
             src.match(/const amazonSearch = [\s\S]*?;\r?\n/)[0],
             src.match(/function isbn13to10\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function isbn10to13\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function parseAmazonISBN\([\s\S]*?\r?\n\}/)[0],
             src.match(/function buildAmazonLink\([\s\S]*?\r?\n\}/)[0],
             src.match(/const OL_HEADERS = [^\n]*/)[0],
             src.match(/async function lookupBook[\s\S]*?\r?\n\}(?=\r?\n)/)[0],
@@ -29,7 +31,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,buildAmazonLink};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,buildAmazonLink};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -59,6 +61,45 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
   ck('979-prefixed (no ISBN-10 exists) returns null', fns.isbn13to10('9791234567896')===null);
   ck('garbage input returns null', fns.isbn13to10('not-an-isbn')===null);
   ck('null input returns null', fns.isbn13to10(null)===null);
+
+  // ---- isbn10to13 -----------------------------------------------------------
+  // Computed, never read from Open Library's edition record: OL lists
+  // 9780345539786 against Red Rising's 034553980X and 9781451621174 against
+  // Catch-22's 1451626657, neither of which is that book's real ISBN-13.
+  console.log('\nisbn10to13');
+  [['0141439513','9780141439518'],['0061120081','9780061120084'],['0142000671','9780142000670'],
+   ['0141393394','9780141393391'],['0385007515','9780385007511'],['034553980X','9780345539809'],
+   ['1451626657','9781451626650'],['0679720200','9780679720201']]
+    .forEach(([i10,i13]) => ck(i10+' -> '+i13, fns.isbn10to13(i10)===i13, fns.isbn10to13(i10)));
+  ck('round-trips back through isbn13to10',
+    fns.isbn13to10(fns.isbn10to13('0385007515'))==='0385007515');
+  ck('an X check digit is accepted', fns.isbn10to13('034553980X')==='9780345539809');
+  ck('garbage returns null', fns.isbn10to13('nope')===null);
+  ck('null returns null', fns.isbn10to13(null)===null);
+  ck('a 13-digit input returns null', fns.isbn10to13('9780141393391')===null);
+
+  // ---- parseAmazonISBN ------------------------------------------------------
+  console.log('\nparseAmazonISBN');
+  ck('plain /dp/ link',
+    fns.parseAmazonISBN('https://www.amazon.com/dp/0141393394')==='0141393394');
+  ck('the long form with title slug and tracking junk',
+    fns.parseAmazonISBN('https://www.amazon.com/Frankenstein-Penguin-Clothbound-Classics-Shelley/dp/0141393394/ref=tmm_hrd_swatch_0?_encoding=UTF8&qid=1790817042&sr=1-3')==='0141393394');
+  ck('/gp/product/ form',
+    fns.parseAmazonISBN('https://www.amazon.com/gp/product/0385007515')==='0385007515');
+  ck('an X check digit survives',
+    fns.parseAmazonISBN('https://www.amazon.com/Red-Rising/dp/034553980X/ref=x')==='034553980X');
+  ck('lowercase x is normalised',
+    fns.parseAmazonISBN('https://www.amazon.com/dp/034553980x')==='034553980X');
+  // A Kindle or non-book ASIN is B0-prefixed and fails the checksum — this is
+  // the guard that stops a meaningless identifier reaching the book record.
+  ck('a Kindle/non-book ASIN is rejected',
+    fns.parseAmazonISBN('https://www.amazon.com/dp/B0CJKTNJLM')===null);
+  ck('a 10-char string that fails the checksum is rejected',
+    fns.parseAmazonISBN('https://www.amazon.com/dp/0141393395')===null);
+  ck('a non-Amazon URL returns null',
+    fns.parseAmazonISBN('https://openlibrary.org/isbn/0141393394')===null);
+  ck('empty returns null', fns.parseAmazonISBN('')===null);
+  ck('null returns null', fns.parseAmazonISBN(null)===null);
 
   // ---- buildAmazonLink --------------------------------------------------
   console.log('\nbuildAmazonLink');
