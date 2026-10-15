@@ -173,6 +173,14 @@ render), `page_count` and `first_publish_year` are stored on the book record
 publication), not whichever edition was picked, so a 2001 reprint of a 1952
 novel still shows 1952.
 
+**Resolved: when Open Library has no description, Google Books is asked for
+one** (`googleDescription()`, in both `resolveEdition()` and
+`lookupByISBN()`). Descriptions *only* — see the Google gotchas below for
+why its page counts and dates are not usable, and why its ISBN lookup isn't
+either. It costs a second request only on the books OL came back empty on,
+and a publisher's prize citations are stripped off the front
+(`cleanGoogleDescription()`) because on a phone those *are* the blurb.
+
 **Resolved: the book detail page is live** (`memberBookDetail()`). Cover,
 title, author, a "year · pages" line (`bookFacts()`), the Amazon link, and
 the cached description, with an explicit "No description found yet" fallback
@@ -454,16 +462,18 @@ regex and run them headlessly — no build, no test framework.
 node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 22 — tally, archiving, typed attendance, end-to-end
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
-node tests/lookup.js     # 61 — Open Library parsing/failure modes, edition
-                          #      filtering, ISBN conversion both ways, and
-                          #      pulling an ISBN out of a pasted Amazon URL
+node tests/lookup.js     # 88 — Open Library parsing/failure modes, edition
+                          #      filtering, ISBN conversion both ways, pulling
+                          #      an ISBN out of a pasted Amazon URL, and the
+                          #      Google volume-match guard + blurb cleaning
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
 ```
 
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
-`buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `parseAttendance`, or
+`buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `parseAttendance`,
+`googleVolumeMatches`, `surnameMatches`, `cleanGoogleDescription`, or
 `suggestionWindowState`, run these. The regexes in the
 harnesses are brittle by design — if extraction fails they throw loudly
 rather than silently testing nothing.
@@ -474,18 +484,41 @@ rather than silently testing nothing.
 
 - **GitHub Pages is case-sensitive.** `INDEX.HTML` returns 404. It must be
   lowercase `index.html`. Case-only renames in git may need two commits.
-- **Google Books: the data API needs a key, the covers don't.** Re-tested
-  2026-10-14 and the keyless `/books/v1/volumes` quota is still **zero** —
-  429 `RESOURCE_EXHAUSTED` on every unauthenticated request, by ISBN, by
-  title, and even by volume id. `GOOGLE_BOOKS_KEY` is the slot for a
-  restricted key; empty by default, and `googleBookByISBN()` no-ops without
-  one so Open Library runs alone exactly as before. **Covers are a different
-  story**: `books.google.com/books/content?vid=ISBN<isbn>` is a plain image
-  URL needing no key and no API call, verified against five real shelf
-  ISBNs, and it is reliably the *English* jacket where OL often isn't. When
-  Google has no cover it answers 200 with a ~1.2KB PNG placeholder rather
-  than 404ing, which is what `coverLooksReal()` catches before falling back
-  to OL's cover.
+- **Google Books ISBN lookup does not work, with or without a key.** This is
+  the single most expensive thing to rediscover here. `q=isbn:<isbn>` returns
+  `totalItems: 0` for *every* ISBN — 10- and 13-digit, with and without
+  `country=US`, quoted, uppercased, plus-encoded, bare — including known-good
+  controls, while a plain title search for the same book returns hundreds of
+  hits. Google's ISBN index is rotted, not rate-limited. Scanning a title
+  search for our own ISBN to recover the edition matched 1 case in 5.
+  Measured live 2026-10-14 against the real shelf.
+- **So Google supplies descriptions and nothing else.** Its page counts are
+  the *ebook's* (1252pp for the 928pp Karamazov, 769pp for the 464pp Rush)
+  and its dates are the *printing's*, which is catastrophic on a classic —
+  it dates The Deerslayer to 2021 against a true 1841. Those two fields stay
+  with Open Library and the organizer. What it is genuinely good for is
+  blurbs for books OL has never catalogued: 2,396 characters on The Rush,
+  which OL has no record of at all. `googleDescription()` searches by title
+  and author, and `googleVolumeMatches()` is the guard that keeps someone
+  else's *1929* from being described as ours — a wrong description is worse
+  than none, because it ships to members as fact.
+- **The key is public, and restriction is what protects it.** It is in page
+  source; that is unavoidable in a single-file client app. It is locked to
+  the HTTP referrer `roughdraftsbookclub.github.io/*` **and** to the Books
+  API (YouTube and Translate both answer "requests to this API are blocked"),
+  verified rather than assumed. Note that a referrer header is trivially
+  spoofable outside a browser, so the restriction stops casual reuse on
+  another site rather than a determined actor — the API limit is what keeps
+  the blast radius at "someone else's free Books quota". Two consequences:
+  any move off GitHub Pages must carry the restriction with it, and **a copy
+  served from localhost gets 403s and silently falls back to Open Library
+  alone**, which is the right failure but a confusing one to debug.
+- **Covers are a separate, keyless endpoint and still resolve by ISBN.**
+  `books.google.com/books/content?vid=ISBN<isbn>` is a plain image URL — no
+  API call, no key — verified against five real shelf ISBNs, and reliably the
+  *English* jacket where OL often isn't. When Google has no cover it answers
+  200 with a ~1.2KB PNG placeholder rather than 404ing, which is what
+  `coverLooksReal()` catches before falling back to OL's cover.
 - **Open Library's problem is accuracy, not coverage.** Tested against the
   books that arrived bare: it *finds* every one of them. What it returns is
   the trouble — the Camus work titled "L'étranger", the Michener titled

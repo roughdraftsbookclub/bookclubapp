@@ -1504,34 +1504,54 @@ async function fetchWorkDescription(workKey){
 }
 
 /* ===========================================================================
-   GOOGLE BOOKS — second opinion on an ISBN
+   GOOGLE BOOKS — a description when Open Library has none
    ===========================================================================
    Open Library finds almost everything, but what it returns is often wrong
    in ways a member notices: it titles the Camus work "L'étranger" and the
    Michener "Bahía de Chesapeake", dates 'Salem's Lot to 1959 and The Right
    Stuff to 1973, and repeats Bernard Beckett's name three times. It also
-   goes down for hours at a stretch — which is what leaves a book on the
-   shelf with no cover and no page count at all.
+   goes down for hours at a stretch, and it had no record at all of The
+   Rush or the Bantam Deerslayer — which is what leaves a book on the shelf
+   with no cover, no blurb and no page count.
 
-   Two separate Google endpoints matter here, and only one needs a key:
+   Google was brought in to cover that. Measured against the real shelf on
+   2026-10-14 with a live key, here is exactly what it is good for — the
+   numbers matter, because the obvious use is the one that does not work:
 
-   1. Covers, KEYLESS. books.google.com/books/content?vid=ISBN<isbn> is a
-      plain image URL — no API call, no key, nothing to go wrong at runtime
-      beyond a 404. Verified against five real ISBNs on the shelf. When a
-      book has no cover Google serves a ~1.2KB PNG placeholder instead of a
-      JPEG, which is why coverLooksReal() below checks the loaded size.
+     * ISBN lookup is DEAD. q=isbn:<isbn> returns totalItems 0 for every
+       ISBN tried — 10- and 13-digit, with and without country=US, quoted,
+       uppercased, plus-encoded and bare, including known-good controls —
+       while a plain title search for the same book returns hundreds of
+       hits. Google's ISBN index is rotted, not rate-limited. Don't spend
+       an afternoon rediscovering this.
+     * Page counts are the EBOOK's and run high: 1252pp for the 928pp
+       Karamazov, 769pp for the 464pp Rush, 753pp for the 592pp 1929.
+     * Dates are the PRINTING's, which is catastrophic on a classic —
+       Google dates The Deerslayer to 2021. The work is 1841.
+     * Matching an edition by scanning a title search for our own ISBN hit
+       1 case in 5. Not a foundation for anything.
+     * Descriptions are genuinely good, and exist for books Open Library
+       has never heard of — 2,396 characters on The Rush.
 
-   2. Page count / description / publication date, NEEDS A KEY. The v1
-      volumes API returns 429 on every unauthenticated request — still true
-      as of 2026-10-14, re-tested. Paste a key into GOOGLE_BOOKS_KEY and
-      lookupByISBN starts consulting it; leave it empty and everything below
-      quietly no-ops and Open Library is used alone, exactly as before.
+   So Google supplies DESCRIPTIONS and nothing else. Page count and year
+   stay with Open Library and with the organizer, who can see and fix both.
 
-   The key, if set, ships in page source — it cannot be hidden in a
-   single-file client app. Restrict it to the HTTP referrer
-   roughdraftsbookclub.github.io/* in the Google Cloud console so a copy
-   lifted from the source is useless anywhere else. */
-const GOOGLE_BOOKS_KEY = '';          // ← paste a restricted key here to enable
+   Covers are separate and need NO key: books.google.com/books/content
+   ?vid=ISBN<isbn> is a plain image URL that does still resolve by ISBN.
+   When Google has no jacket it serves a ~1.2KB PNG placeholder rather than
+   404ing, which is why coverLooksReal() below checks the loaded size.
+
+   The key ships in page source — it cannot be hidden in a single-file
+   client app. It is restricted to the HTTP referrer
+   roughdraftsbookclub.github.io/*, and that was verified rather than
+   assumed: the identical request is refused with no referrer and refused
+   from any other origin. That restriction is the only thing protecting it,
+   so it has to survive any move off GitHub Pages — and note that a local
+   copy served from localhost gets 403s here and quietly falls back to Open
+   Library alone, which is the right failure but a confusing one to debug. */
+// Referrer-restricted to roughdraftsbookclub.github.io/* — see above. Empty
+// string disables every Google call and falls back to Open Library alone.
+const GOOGLE_BOOKS_KEY = 'AIzaSyCe7U42qo8V8U6lXaFI6fBPW6JSN8DxEQ0';
 
 const googleCover = (isbn, zoom = 1) =>
   `https://books.google.com/books/content?vid=ISBN${isbn}&printsec=frontcover&img=1&zoom=${zoom}`;
@@ -1543,30 +1563,160 @@ function coverLooksReal(img){
   return !!img && img.naturalWidth >= 80 && img.naturalHeight >= 100;
 }
 
-/** Google's view of one ISBN, or null if there's no key or the call fails.
-    Never throws and never blocks: every caller treats it as a bonus. */
-async function googleBookByISBN(isbn10){
-  if (!GOOGLE_BOOKS_KEY || !isbn10) return null;
+const normWords = s => String(s || '').toLowerCase()
+  .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+/** Edit distance, capped — we only ever care whether it's ≤ 2. */
+function editDistance(a, b){
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++){
+    const row = [i];
+    for (let j = 1; j <= b.length; j++)
+      row[j] = Math.min(prev[j] + 1, row[j - 1] + 1,
+                        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length];
+}
+
+/** Transliterated names don't match on the nose: Google files The Brothers
+    Karamazov under "Dostoyevsky" and we store "Dostoevsky", which rejected
+    the book's own description until this allowed for it.
+
+    The tolerance is deliberately stingy and scales with length, because
+    Harris/Harrison are two edits apart and two different people — one edit
+    from six letters, two only from nine, which covers Dostoevsky/Dostoyevsky
+    and Tolstoy/Tolstoi without merging anybody. */
+function surnameMatches(want, haystack){
+  if (!want) return true;
+  const words = haystack.split(' ').filter(Boolean);
+  // Whole word, not substring: "Harris" is inside "Harrison" and they are
+  // not the same writer.
+  if (words.includes(want)) return true;
+  if (want.length < 6) return false;
+  const allowed = want.length >= 9 ? 2 : 1;
+  return words.some(w => editDistance(want, w) <= allowed);
+}
+
+/** Is this Google volume actually the book we asked about? A title search for
+    "1929" will happily return other people's 1929s, and a description pinned
+    to the wrong book is worse than no description — it gets shown to members
+    as fact. Every significant word of our title must appear, and the author's
+    surname must match. */
+function googleVolumeMatches(v, title, author){
+  const want = normWords(title).split(' ').filter(w => w.length > 3);
+  const got  = normWords(v.title) + ' ' + normWords(v.subtitle);
+  if (!want.length || !want.every(w => got.includes(w))) return false;
+  const surname = normWords(author).split(' ').filter(Boolean).pop();
+  return surnameMatches(surname, normWords((v.authors || []).join(' ')));
+}
+
+const ACCOLADE = 'bestseller|best book|best seller|most anticipated|notable book'
+  + '|book of the year|award winner|winner of|pulitzer|national book award'
+  + '|finalist|longlist|shortlist|summer reading|reading list|favorite book'
+  + '|favourite book|best of the year|now a (?:major|netflix)';
+
+/** Publishers front-load the blurb with prize citations: Google's copy for
+    Barbarian Days spends 150 characters on a Pulitzer, Obama's reading list
+    and a pull-quote before describing the book. On a phone that IS the blurb,
+    so it comes off.
+
+    Four separate shapes, each stripped by its own bounded rule rather than
+    one greedy regex — a greedy one eats real opening sentences, which is the
+    worse failure. Anything left is still editable in the organizer's form. */
+function cleanGoogleDescription(raw, title){
+  if (!raw) return null;
+  let s = String(raw)
+    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&')
+    .replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[•·‧]/g, '·');            // bullets → one separator
+
+  const rules = [
+    // "**Winner of the 2016 Pulitzer Prize**" — markdown-bolded citation.
+    new RegExp('^\\s*\\*\\*[^*]{0,120}?(?:' + ACCOLADE + ')[^*]{0,120}?\\*\\*\\s*', 'i'),
+    // "#1 NEW YORK TIMES BESTSELLER" — a shouted run of caps.
+    new RegExp('^\\s*(?:#\\d+\\s*)?[A-Z0-9][A-Z0-9 \'’!.-]{6,60}?(?:' + ACCOLADE.toUpperCase() + ')[A-Z0-9 \'’!.-]{0,40}\\s*', ''),
+    // "A New York Times Notable Book of 2025 ·" — separator-delimited.
+    new RegExp('^[^·\\n]{0,140}?(?:' + ACCOLADE + ')[^·\\n]{0,140}·\\s*', 'i'),
+    // '"the finest surf book ever" —The Wall Street Journal ·' — a pull-quote
+    // with attribution, stripped ONLY when a separator shows where the
+    // attribution ends. Without that boundary there is no way to tell the
+    // end of a publication's name from the start of the real first sentence,
+    // and guessing truncates the blurb. The title rule below is the other
+    // half of this.
+    /^\s*[“"][^”"]{10,300}[”"]\s*[—–-]\s*[^·\n]{0,60}?·\s*/,
+  ];
+
+  // "Included in President Obama's 2016 Summer Reading List" — a citation
+  // with no separator at all, so it has to end on a recognisable token
+  // followed by a capital. Bounded on both sides; the alternative is a
+  // greedy match that swallows the first real sentence.
+  //
+  // Not in the list above because it needs TWO case rules at once: the
+  // keywords are case-insensitive, the "next word is capitalised" test is
+  // emphatically not. One /i regex would case-fold the lookahead too and
+  // cut at "Pulitzer Prize |finalist". So the keywords are matched against
+  // a lowercased copy and the capital is checked in the original.
+  //
+  // \b on the end tokens matters as well: without it "list" matches inside
+  // "fina|list" and the strip again runs a clause too far.
+  const runOn = new RegExp('^\\s*[^.\\n]{0,70}?(?:' + ACCOLADE + ')[^.\\n]{0,70}?'
+    + '\\b(?:list|prize|award|fall|spring|summer|winter|\\d{4})\\s+', 'i');
+  const stripRunOnCitation = str => {
+    const m = str.toLowerCase().match(runOn);
+    if (!m) return str;
+    const next = str.charAt(m[0].length);
+    return (next && (next === next.toUpperCase() && /[A-Z“"]/.test(next)))
+      ? str.slice(m[0].length) : str;
+  };
+  for (let pass = 0; pass < 5; pass++){
+    const before = s;
+    for (const re of rules) s = s.replace(re, '');
+    s = stripRunOnCitation(s);
+    s = s.replace(/^[\s·—–-]+/, '');
+    if (s === before) break;
+  }
+
+  // Last resort for a pull-quote whose attribution runs straight into the
+  // text: if the blurb still opens on a quotation and the book's own title
+  // appears soon after, the real description starts at the title. High
+  // precision because it only fires when the title is actually there.
+  if (title && /^\s*[“"]/.test(s)){
+    const at = s.indexOf(title, 1);
+    if (at > 0 && at < 300) s = s.slice(at);
+  }
+
+  s = s.replace(/\s+/g, ' ').trim();
+  // Low floor on purpose: a real one-line blurb ("Recently placed in charge
+  // of the Aqua Augusta…") is worth keeping, and anything shorter than this
+  // is a stub rather than a description.
+  return s.length >= 40 ? s : null;
+}
+
+/** A description for a book Open Library had none for, or null. Never throws
+    and never blocks: every caller treats it as a bonus. Searches by title and
+    author because ISBN search returns nothing — see the note above. */
+async function googleDescription(title, author){
+  if (!GOOGLE_BOOKS_KEY || !title) return null;
+  const q = [title, author].filter(Boolean).join(' ');
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 9000);
   try {
     const r = await fetch(
-      `https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn10)}`
-      + `&country=US&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`,
+      'https://www.googleapis.com/books/v1/volumes?country=US&maxResults=10'
+      + `&q=${encodeURIComponent(q)}&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`,
       { signal: ac.signal }).finally(() => clearTimeout(timer));
     if (!r.ok) return null;
     const data = await r.json();
-    const v = data.items && data.items[0] && data.items[0].volumeInfo;
-    if (!v) return null;
-    return {
-      title: v.title || '',
-      author: (v.authors && v.authors[0]) || '',
-      // publishedDate is THIS printing, not the work. Only used when Open
-      // Library has nothing, and flagged to the organizer either way.
-      editionYear: (v.publishedDate || '').slice(0, 4),
-      pages: v.pageCount || '',
-      description: v.description || null,
-    };
+    for (const item of (data.items || [])){
+      const v = item.volumeInfo || {};
+      if (!v.description || !googleVolumeMatches(v, title, author)) continue;
+      const d = cleanGoogleDescription(v.description, title);
+      if (d) return d;
+    }
+    return null;
   } catch (e){ return null; }
 }
 
@@ -1623,21 +1773,13 @@ async function lookupByISBN(isbn10){
   const workKey = (doc && doc.key) || (edition && edition.works && edition.works[0] && edition.works[0].key);
   out.description = workKey ? await fetchWorkDescription(workKey) : null;
 
-  // Google fills the gaps rather than overruling. Open Library's year is the
-  // *work's* first publication, which is the one the shelf wants; Google's is
-  // this printing's, so it only stands in when OL offered nothing — and the
-  // form says so, because 2005 on a 2003 novel is exactly the kind of wrong
-  // that looks right. Covers are the opposite way round: Google's are
-  // reliably the English jacket, so they lead, with OL behind them.
-  const g = await googleBookByISBN(isbn10);
-  out.google = g ? {} : null;
-  if (g){
-    if (!out.title)       { out.title = g.title;       out.google.title = true; }
-    if (!out.author)      { out.author = g.author;     out.google.author = true; }
-    if (!out.pages)       { out.pages = g.pages;       out.google.pages = true; }
-    if (!out.description) { out.description = g.description; out.google.description = true; }
-    if (!out.year && g.editionYear){ out.year = g.editionYear; out.google.year = true; }
-  }
+  // Google is a DESCRIPTION fallback and nothing else — its page counts are
+  // the ebook's and its dates are the printing's, both measured wrong against
+  // real shelf books (see the note above it). It can only run when Open
+  // Library gave us a title to search with, because Google's own ISBN lookup
+  // returns nothing at all.
+  if (!out.description && out.title)
+    out.description = await googleDescription(out.title, out.author);
 
   // Keyless, and independent of everything above: Google's cover by ISBN.
   // Offered first with the Open Library one kept as the fallback the form
@@ -2231,10 +2373,15 @@ function memberCheckingEdition(){
     edition picker (2+ good candidates) or straight to confirm (0 or 1). */
 async function resolveEdition(hit, rawTitle, rawAuthor, hits){
   memberCheckingEdition();
-  const [editions, description] = await Promise.all([
+  const [editions, olDescription] = await Promise.all([
     fetchEditionCandidates(hit.workKey, hit.title),
     fetchWorkDescription(hit.workKey),
   ]);
+  // Open Library has no blurb for a great many older books, and none at all
+  // for anything it hasn't catalogued. Only reached when OL came back empty,
+  // so the common path still costs one request, not two.
+  const description = olDescription
+    || await googleDescription(hit.title, hit.author);
   if (editions.length >= 2) return memberPickEdition(hit, editions, description, rawTitle, rawAuthor, hits);
   return memberConfirmBook(mergeEditionIntoHit(hit, editions[0] || null, description), rawTitle, rawAuthor, hits);
 }

@@ -10,7 +10,13 @@ const code=[src.match(/const olCover = [^\n]*/)[0],
             src.match(/const OL_HEADERS = [^\n]*/)[0],
             src.match(/async function lookupBook[\s\S]*?\r?\n\}(?=\r?\n)/)[0],
             src.match(/async function fetchEditionCandidates\([\s\S]*?\r?\n\}(?=\r?\n)/)[0],
-            src.match(/async function fetchWorkDescription\([\s\S]*?\r?\n\}(?=\r?\n)/)[0]].join('\n');
+            src.match(/async function fetchWorkDescription\([\s\S]*?\r?\n\}(?=\r?\n)/)[0],
+            src.match(/const normWords = [\s\S]*?;\r?\n/)[0],
+            src.match(/const ACCOLADE = [\s\S]*?;\r?\n/)[0],
+            src.match(/function editDistance\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function surnameMatches\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function googleVolumeMatches\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function cleanGoogleDescription\([\s\S]*?\r?\n\}/)[0]].join('\n');
 global.AbortController=class{constructor(){this.signal={}}abort(){}};
 
 let pass=0,fail=0;const ck=(n,c,x='')=>{c?pass++:fail++;console.log((c?'  ok  ':'FAIL  ')+n+(c?'':'  <- '+x));};
@@ -31,7 +37,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,buildAmazonLink};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,buildAmazonLink,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -153,6 +159,77 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
   global.fetch=async()=>{throw new Error('offline')};
   ck('offline -> null, never blocks the flow', await fns.fetchWorkDescription('/works/OL1W')===null);
   ck('no work key -> null', await fns.fetchWorkDescription(null)===null);
+
+  // ---- Google Books: picking the right volume -------------------------------
+  // Google's ISBN index returns nothing (measured 2026-10-14), so the only way
+  // in is a title/author search — which makes this guard the ONLY thing
+  // standing between a member and a description for somebody else's book.
+  console.log('\nGoogle Books - volume matching');
+  const gm = fns.googleVolumeMatches;
+  ck('exact title and author match',
+     gm({title:'The Deerslayer',authors:['James Fenimore Cooper']},'The Deerslayer','James Fenimore Cooper'));
+  ck('right title, wrong author -> reject',
+     !gm({title:'1929',authors:['Fred Nobody']},'1929','Andrew Ross Sorkin'));
+  ck('different book by the same author -> reject',
+     !gm({title:'Crime and Punishment',authors:['Fyodor Dostoevsky']},'The Brothers Karamazov','Fyodor Dostoevsky'));
+  ck('significant word missing from title -> reject',
+     !gm({title:'Pompeii',authors:['Robert Harris']},'Pompeii Revisited','Robert Harris'));
+  ck('subtitle supplies the match',
+     gm({title:'The Rush',subtitle:'California Gold',authors:['Nathaniel Philbrick']},'The Rush California','Nathaniel Philbrick'));
+  ck('no author known -> title alone decides',
+     gm({title:'Pompeii',authors:['Robert Harris']},'Pompeii',''));
+  ck('volume with no authors at all -> reject',
+     !gm({title:'Pompeii'},'Pompeii','Robert Harris'));
+
+  // Transliteration: Google files this one under "Dostoyevsky". Before the
+  // surname tolerance existed, the book's own description was rejected.
+  const sm = fns.surnameMatches;
+  ck('Dostoevsky matches Dostoyevsky', sm('dostoevsky','fyodor dostoyevsky'));
+  ck('Tolstoy matches Tolstoi', sm('tolstoy','leo tolstoi'));
+  ck('Harris does NOT match Harrison', !sm('harris','robert harrison'));
+  ck('short surnames need an exact match', !sm('king','kong'));
+  ck('unrelated surnames stay unrelated', !sm('steinbeck','fyodor dostoyevsky'));
+
+  // ---- Google Books: cleaning the blurb -------------------------------------
+  // Publishers lead with prize citations; on a phone that IS the blurb. The
+  // rules are deliberately narrow, so the tests that matter most are the ones
+  // asserting real prose comes back unchanged.
+  console.log('\nGoogle Books - description cleaning');
+  const cd = fns.cleanGoogleDescription;
+  ck('strips HTML tags',
+     cd('<p>A novel about <b>the</b> sea and the men who sailed it for years.</p>')
+       === 'A novel about the sea and the men who sailed it for years.');
+  ck('decodes entities',
+     cd('Tom &amp; Huck light out for the territory, and that is the whole of it.')
+       === 'Tom & Huck light out for the territory, and that is the whole of it.');
+  ck('drops a separator-delimited citation',
+     cd('A New York Times Most Anticipated Book of 2026 \u00b7 In January 1848 a carpenter spotted gold in a stream.')
+       === 'In January 1848 a carpenter spotted gold in a stream.');
+  ck('drops a markdown-bolded prize line',
+     cd('**Winner of the 2016 Pulitzer Prize** Surfing only looks like a sport, and that is the point of it.')
+       === 'Surfing only looks like a sport, and that is the point of it.');
+  ck('cuts to the title when a pull-quote runs into the text',
+     cd('\u201cThe finest surf book ever written.\u201d \u2014The New York Times Barbarian Days is a memoir of an obsession.','Barbarian Days')
+       === 'Barbarian Days is a memoir of an obsession.');
+  ck('run-on citation stops at the capital, not mid-clause',
+     cd('A Los Angeles Times Best Book of the Fall National Book Award winner Nathaniel Philbrick reveals the Gold Rush.')
+       .startsWith('National Book Award winner'),
+     'a case-folded lookahead would eat "National Book Award winner" too');
+  ck('"finalist" is not the end-token "list"',
+     !cd('A Los Angeles Times Best Book of the Fall National Book Award winner and Pulitzer Prize finalist Nathaniel Philbrick reveals the Gold Rush.')
+       .startsWith('finalist'));
+  ck('nothing but a citation -> null', cd('#1 NEW YORK TIMES BESTSELLER') === null);
+  ck('too short to be a description -> null', cd('A novel.') === null);
+  ck('null in -> null out', cd(null) === null);
+
+  // Real prose must survive untouched. A cleaner that eats the opening
+  // sentence is worse than one that leaves the puffery in place.
+  [ 'In January 1848, a carpenter spotted flecks of gold in a shallow stream near the mill.',
+    'WINSTON SMITH thought of the telescreen and the long corridors he walked each morning.',
+    'Best friends since childhood, the two women drift apart across four decades in Naples.',
+    'The Deerslayer, or The First Warpath (1841) was the last of the Leatherstocking tales written.',
+    '\u201cCall me Ishmael.\u201d So begins the greatest of American novels, and the voyage of the Pequod.'
+  ].forEach(function(prose,i){ ck('real prose '+(i+1)+' passes through unchanged', cd(prose) === prose); });
 
   console.log('\n'+pass+' passed, '+fail+' failed'); process.exit(fail?1:0);
 })();
