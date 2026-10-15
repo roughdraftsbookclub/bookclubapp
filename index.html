@@ -1701,34 +1701,61 @@ function cleanGoogleDescription(raw, title){
 async function googleDescription(title, author){
   if (!GOOGLE_BOOKS_KEY || !title) return null;
   const q = [title, author].filter(Boolean).join(' ');
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 9000);
-  try {
-    const r = await fetch(
-      'https://www.googleapis.com/books/v1/volumes?country=US&maxResults=10'
-      + `&q=${encodeURIComponent(q)}&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`,
-      // The key is restricted to this exact PATH, and a browser sends only
-      // the origin as the referrer on a cross-origin request — so the live
-      // site was getting 403s while a hand-spoofed header from Node passed.
-      // Sending the full referrer is what makes the restriction usable.
-      //
-      // Pinned to a literal rather than letting 'unsafe-url' send
-      // location.href: the organizer's page URL carries ?organizer, and that
-      // has no business being handed to Google in a referrer header. Must
-      // stay same-origin or the fetch spec ignores it.
-      { signal: ac.signal,
-        referrer: 'https://roughdraftsbookclub.github.io/bookclubapp/',
-        referrerPolicy: 'unsafe-url' }).finally(() => clearTimeout(timer));
-    if (!r.ok) return null;
-    const data = await r.json();
-    for (const item of (data.items || [])){
-      const v = item.volumeInfo || {};
-      if (!v.description || !googleVolumeMatches(v, title, author)) continue;
-      const d = cleanGoogleDescription(v.description, title);
-      if (d) return d;
+  const url = 'https://www.googleapis.com/books/v1/volumes?country=US&maxResults=10'
+    + `&q=${encodeURIComponent(q)}&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`;
+
+  // Google answers 503 on roughly half of all calls — measured six in a row
+  // from the live site and got three. Without a retry a member suggesting a
+  // book would get no description about half the time even when Google has
+  // a perfectly good one.
+  //
+  // Bounded by one overall deadline rather than a per-attempt timeout,
+  // because this blocks the member on the "Checking the edition…" screen and
+  // the app is not supposed to make anyone wait. Worst case is the budget
+  // below; the common case is one fast call.
+  const deadline = Date.now() + 6500;
+  for (let attempt = 0; attempt < 3; attempt++){
+    const left = deadline - Date.now();
+    if (left < 600) break;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), Math.min(left, 3000));
+    try {
+      const r = await fetch(url,
+        // The key is restricted to this exact PATH, and a browser sends only
+        // the origin as the referrer on a cross-origin request — so the live
+        // site got 403s while a hand-spoofed header from Node passed.
+        // Sending the full referrer is what makes the restriction usable.
+        //
+        // Pinned to a literal rather than letting 'unsafe-url' send
+        // location.href: the organizer's page URL carries ?organizer, and
+        // that has no business being handed to Google in a referrer header.
+        // Must stay same-origin or the fetch spec ignores it.
+        { signal: ac.signal,
+          referrer: 'https://roughdraftsbookclub.github.io/bookclubapp/',
+          referrerPolicy: 'unsafe-url' }).finally(() => clearTimeout(timer));
+
+      // 503/429 is Google being Google — worth another go. Anything else
+      // (403 on the referrer, 400 on the query) will fail identically on a
+      // retry, so give up and let Open Library's answer stand.
+      if (r.status === 503 || r.status === 429){
+        await new Promise(res => setTimeout(res, 300 + attempt * 400));
+        continue;
+      }
+      if (!r.ok) return null;
+      const data = await r.json();
+      for (const item of (data.items || [])){
+        const v = item.volumeInfo || {};
+        if (!v.description || !googleVolumeMatches(v, title, author)) continue;
+        const d = cleanGoogleDescription(v.description, title);
+        if (d) return d;
+      }
+      return null;                      // a real answer: Google has nothing
+    } catch (e){
+      clearTimeout(timer);
+      await new Promise(res => setTimeout(res, 300 + attempt * 400));
     }
-    return null;
-  } catch (e){ return null; }
+  }
+  return null;
 }
 
 /**
