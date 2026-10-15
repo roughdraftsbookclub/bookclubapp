@@ -37,7 +37,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,buildAmazonLink,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -180,6 +180,23 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
      gm({title:'Pompeii',authors:['Robert Harris']},'Pompeii',''));
   ck('volume with no authors at all -> reject',
      !gm({title:'Pompeii'},'Pompeii','Robert Harris'));
+
+  // Accents. This is a real bug that shipped: without a Unicode-decomposing
+  // pass, [^a-z0-9] turns the macron in "Shōgun" into a SPACE, giving
+  // "sh gun", which does not contain "shogun" — so every correctly-spelled
+  // Google result was rejected and the four best descriptions discarded.
+  // Both spellings below occur in Google's own data, precomposed and
+  // decomposed, and both must normalise to the same word.
+  ck('precomposed "Shōgun" normalises to shogun', fns.normWords('Shōgun') === 'shogun');
+  ck('decomposed "Shōgun" normalises to shogun', fns.normWords('Shōgun') === 'shogun');
+  ck("accented title normalises (L'étranger)", fns.normWords("L'étranger") === 'l etranger');
+  ck('accents do not split a word into two',
+     fns.normWords('Shōgun').split(' ').length === 1);
+  ck('ASCII title still matches the accented volume',
+     gm({title:'Shōgun',authors:['James Clavell']},'Shogun','James Clavell'),
+     'the macron must not be treated as a word break');
+  ck('accented author still matches',
+     gm({title:'Cien anos',authors:['Gabriel García Márquez']},'Cien anos','Gabriel Garcia Marquez'));
 
   // Transliteration: Google files this one under "Dostoyevsky". Before the
   // surname tolerance existed, the book's own description was rejected.

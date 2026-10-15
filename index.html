@@ -1563,7 +1563,17 @@ function coverLooksReal(img){
   return !!img && img.naturalWidth >= 80 && img.naturalHeight >= 100;
 }
 
-const normWords = s => String(s || '').toLowerCase()
+/** Lowercased, punctuation-free words for comparison.
+    The NFD pass is load-bearing, not tidiness: without it the [^a-z0-9]
+    filter turns the macron in "Shōgun" into a SPACE, giving "sh gun", which
+    fails to contain "shogun" — so every correctly-spelled Google result for
+    the book was rejected and the four best descriptions thrown away.
+    Decomposing first turns ō into o + a combining mark, and the mark is
+    stripped rather than becoming a word break. Same for é, í, ü and the
+    accented author names this shelf already carries. */
+const normWords = s => String(s || '')
+  .normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .toLowerCase()
   .replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 
 /** Edit distance, capped — we only ever care whether it's ≤ 2. */
