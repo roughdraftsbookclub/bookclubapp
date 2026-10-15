@@ -474,9 +474,33 @@ rather than silently testing nothing.
 
 - **GitHub Pages is case-sensitive.** `INDEX.HTML` returns 404. It must be
   lowercase `index.html`. Case-only renames in git may need two commits.
-- **Google Books API is unusable.** Keyless daily quota is now **zero** — every
-  unauthenticated request returns 429 `RESOURCE_EXHAUSTED`. Open Library is the
-  only lookup source. Don't reintroduce Google Books without an API key.
+- **Google Books: the data API needs a key, the covers don't.** Re-tested
+  2026-10-14 and the keyless `/books/v1/volumes` quota is still **zero** —
+  429 `RESOURCE_EXHAUSTED` on every unauthenticated request, by ISBN, by
+  title, and even by volume id. `GOOGLE_BOOKS_KEY` is the slot for a
+  restricted key; empty by default, and `googleBookByISBN()` no-ops without
+  one so Open Library runs alone exactly as before. **Covers are a different
+  story**: `books.google.com/books/content?vid=ISBN<isbn>` is a plain image
+  URL needing no key and no API call, verified against five real shelf
+  ISBNs, and it is reliably the *English* jacket where OL often isn't. When
+  Google has no cover it answers 200 with a ~1.2KB PNG placeholder rather
+  than 404ing, which is what `coverLooksReal()` catches before falling back
+  to OL's cover.
+- **Open Library's problem is accuracy, not coverage.** Tested against the
+  books that arrived bare: it *finds* every one of them. What it returns is
+  the trouble — the Camus work titled "L'étranger", the Michener titled
+  "Bahía de Chesapeake", 'Salem's Lot dated 1959 and The Right Stuff 1973
+  (both wrong), and Bernard Beckett's name repeated three times, which is
+  **their data, not a bug in the suggestion flow**. `&language=eng` does not
+  help: the work title is what comes back, and the work record itself is the
+  thing in the wrong language. It also goes down for hours at a time —
+  three separate outages during October — which is the likeliest reason a
+  book lands on the shelf with nothing attached at all.
+- **An ISBN fixes all of it; a title fixes none of it.** Every clean record
+  on the shelf started from an ISBN (the organizer's paste-a-link flow);
+  every bare or wrong one started from a member typing a title. That is why
+  the member suggestion screen now offers a link box *first*
+  (`memberNominate`), falling back to title search when there isn't one.
 - **`file://` blocks `fetch`.** Opening `index.html` from disk breaks the book
   lookup. Serve it (`python3 -m http.server`) when testing locally.
 - **Open Library jackets take ~750ms** and redirect to archive.org. They load,

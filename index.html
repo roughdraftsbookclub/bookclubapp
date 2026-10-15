@@ -615,6 +615,13 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   background:none; padding:0;
 }
 
+/* "or type it" rule between the two ways of suggesting a book */
+.orline{
+  display:flex; align-items:center; gap:12px; margin:4px 0 17px;
+  color:var(--ink-3); font-size:11.5px; letter-spacing:.4px; text-transform:uppercase;
+}
+.orline::before, .orline::after{ content:""; flex:1 1 auto; height:1px; background:var(--hair); }
+
 .field{ margin-bottom:17px; }
 .field label{ display:block; font-size:12.5px; font-weight:600;
   color:var(--ink-2); margin-bottom:7px; }
@@ -1496,6 +1503,73 @@ async function fetchWorkDescription(workKey){
   }
 }
 
+/* ===========================================================================
+   GOOGLE BOOKS — second opinion on an ISBN
+   ===========================================================================
+   Open Library finds almost everything, but what it returns is often wrong
+   in ways a member notices: it titles the Camus work "L'étranger" and the
+   Michener "Bahía de Chesapeake", dates 'Salem's Lot to 1959 and The Right
+   Stuff to 1973, and repeats Bernard Beckett's name three times. It also
+   goes down for hours at a stretch — which is what leaves a book on the
+   shelf with no cover and no page count at all.
+
+   Two separate Google endpoints matter here, and only one needs a key:
+
+   1. Covers, KEYLESS. books.google.com/books/content?vid=ISBN<isbn> is a
+      plain image URL — no API call, no key, nothing to go wrong at runtime
+      beyond a 404. Verified against five real ISBNs on the shelf. When a
+      book has no cover Google serves a ~1.2KB PNG placeholder instead of a
+      JPEG, which is why coverLooksReal() below checks the loaded size.
+
+   2. Page count / description / publication date, NEEDS A KEY. The v1
+      volumes API returns 429 on every unauthenticated request — still true
+      as of 2026-10-14, re-tested. Paste a key into GOOGLE_BOOKS_KEY and
+      lookupByISBN starts consulting it; leave it empty and everything below
+      quietly no-ops and Open Library is used alone, exactly as before.
+
+   The key, if set, ships in page source — it cannot be hidden in a
+   single-file client app. Restrict it to the HTTP referrer
+   roughdraftsbookclub.github.io/* in the Google Cloud console so a copy
+   lifted from the source is useless anywhere else. */
+const GOOGLE_BOOKS_KEY = '';          // ← paste a restricted key here to enable
+
+const googleCover = (isbn, zoom = 1) =>
+  `https://books.google.com/books/content?vid=ISBN${isbn}&printsec=frontcover&img=1&zoom=${zoom}`;
+
+/** Google serves a small PNG placeholder rather than 404ing when it has no
+    jacket, so "did it load" isn't enough — a real cover is wider than the
+    placeholder. Used to decide whether to keep Google's cover or fall back. */
+function coverLooksReal(img){
+  return !!img && img.naturalWidth >= 80 && img.naturalHeight >= 100;
+}
+
+/** Google's view of one ISBN, or null if there's no key or the call fails.
+    Never throws and never blocks: every caller treats it as a bonus. */
+async function googleBookByISBN(isbn10){
+  if (!GOOGLE_BOOKS_KEY || !isbn10) return null;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 9000);
+  try {
+    const r = await fetch(
+      `https://www.googleapis.com/books/v1/volumes?q=isbn:${encodeURIComponent(isbn10)}`
+      + `&country=US&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`,
+      { signal: ac.signal }).finally(() => clearTimeout(timer));
+    if (!r.ok) return null;
+    const data = await r.json();
+    const v = data.items && data.items[0] && data.items[0].volumeInfo;
+    if (!v) return null;
+    return {
+      title: v.title || '',
+      author: (v.authors && v.authors[0]) || '',
+      // publishedDate is THIS printing, not the work. Only used when Open
+      // Library has nothing, and flagged to the organizer either way.
+      editionYear: (v.publishedDate || '').slice(0, 4),
+      pages: v.pageCount || '',
+      description: v.description || null,
+    };
+  } catch (e){ return null; }
+}
+
 /**
  * Everything Open Library knows about one specific ISBN-10, for the
  * organizer's "add by Amazon link" form.
@@ -1548,6 +1622,30 @@ async function lookupByISBN(isbn10){
 
   const workKey = (doc && doc.key) || (edition && edition.works && edition.works[0] && edition.works[0].key);
   out.description = workKey ? await fetchWorkDescription(workKey) : null;
+
+  // Google fills the gaps rather than overruling. Open Library's year is the
+  // *work's* first publication, which is the one the shelf wants; Google's is
+  // this printing's, so it only stands in when OL offered nothing — and the
+  // form says so, because 2005 on a 2003 novel is exactly the kind of wrong
+  // that looks right. Covers are the opposite way round: Google's are
+  // reliably the English jacket, so they lead, with OL behind them.
+  const g = await googleBookByISBN(isbn10);
+  out.google = g ? {} : null;
+  if (g){
+    if (!out.title)       { out.title = g.title;       out.google.title = true; }
+    if (!out.author)      { out.author = g.author;     out.google.author = true; }
+    if (!out.pages)       { out.pages = g.pages;       out.google.pages = true; }
+    if (!out.description) { out.description = g.description; out.google.description = true; }
+    if (!out.year && g.editionYear){ out.year = g.editionYear; out.google.year = true; }
+  }
+
+  // Keyless, and independent of everything above: Google's cover by ISBN.
+  // Offered first with the Open Library one kept as the fallback the form
+  // swaps to if Google turns out to be serving its placeholder.
+  out.googleCover = googleCover(isbn10, 1);
+  out.olCoverFallback = out.cover || '';
+  if (out.googleCover) out.cover = out.googleCover;
+
   out.found = !!(out.title);
   return out;
 }
@@ -1972,6 +2070,23 @@ function memberNominate(){
     <div class="body pad-lg">
       <p class="formintro">Just the title is enough.<br>We'll find the rest.</p>
 
+      ${/* The link box comes first on purpose. Typing a title makes the app
+            guess which edition you meant, and for older books it guesses
+            badly — it offers "L'étranger" for The Stranger and dates
+            'Salem's Lot to 1959. A link carries the ISBN, so there is
+            nothing left to guess. Title still works for anyone who hasn't
+            got a link; it just isn't the better path any more. */''}
+      <div class="field">
+        <label for="n-url">Paste a link <span class="opt">best way</span></label>
+        <input class="control" id="n-url" type="url" inputmode="url" placeholder="Amazon link to the book" autocomplete="off">
+        <div class="helpnote" style="margin-top:7px">
+          From Amazon's share button, or the address bar. Gets the right
+          cover, page count and edition first time.
+        </div>
+      </div>
+
+      <div class="orline"><span>or type it</span></div>
+
       <div class="field" id="f-t">
         <label for="n-t">Book title</label>
         <input class="control" id="n-t" type="text" placeholder="e.g. The Wager" maxlength="120" autocomplete="off">
@@ -1993,14 +2108,38 @@ function memberNominate(){
       <button class="btn btn-primary" id="n-go" disabled>Submit Suggestion</button>
     </div>`;
 
-  const t = $('#n-t'), a = $('#n-a'), go = $('#n-go');
-  const check = () => go.disabled = !t.value.trim();
+  const t = $('#n-t'), a = $('#n-a'), u = $('#n-url'), go = $('#n-go');
+  // Either route is enough on its own.
+  const check = () => go.disabled = !(t.value.trim() || parseAmazonISBN(u.value.trim()));
   t.oninput = () => { $('#f-t').classList.remove('invalid'); check(); };
+  u.oninput = check;
   $('#n-close').onclick = () => goto('books');
 
   go.onclick = async () => {
-    if (!t.value.trim()){ $('#f-t').classList.add('invalid'); return; }
+    const link = u.value.trim(), isbn = parseAmazonISBN(link);
     go.disabled = true;
+
+    // A link wins when it carries a real ISBN-10. parseAmazonISBN rejects
+    // Kindle and non-book ASINs on the checksum, so a wrong sort of link
+    // falls through to the title path rather than adding a book keyed to
+    // something meaningless.
+    if (isbn){
+      go.innerHTML = '<span class="spin"></span>Reading the link…';
+      const hit = await lookupByISBN(isbn);
+      if (hit && hit.found) return memberConfirmBook(hit, hit.title, hit.author, []);
+      // Link parsed but nothing came back — fall through to the title if
+      // they gave one, otherwise say so rather than silently doing nothing.
+      if (!t.value.trim()){
+        return memberNoMatch(link, '', true);
+      }
+    } else if (link && !t.value.trim()){
+      go.disabled = false;
+      go.innerHTML = 'Submit Suggestion';
+      toast("That link has no book in it — use the one from the book's own page");
+      return;
+    }
+
+    if (!t.value.trim()){ go.disabled = false; go.innerHTML = 'Submit Suggestion'; $('#f-t').classList.add('invalid'); return; }
     go.innerHTML = '<span class="spin"></span>Searching…';
     const title = t.value.trim(), author = a.value.trim();
     const hits = await lookupBook(title, author);
@@ -2194,9 +2333,23 @@ function memberConfirmBook(h, rawTitle, rawAuthor, hits){
       <button class="btn btn-ghost" id="k-no">Not this one</button>
     </div>`;
 
-  const back = () => memberPickMatch(rawTitle, rawAuthor, hits);
+  // Arrived from a pasted link rather than a search? There's no match list
+  // to go back to — return to the form instead of an empty picker.
+  const back = () => (hits && hits.length)
+    ? memberPickMatch(rawTitle, rawAuthor, hits)
+    : memberNominate();
   $('#k-back').onclick = back;
   $('#k-no').onclick = back;
+
+  // Google's cover is offered first because it's reliably the English
+  // jacket, but it answers 200 with a small placeholder when it has none.
+  // If what loaded is placeholder-sized, quietly swap to Open Library's.
+  const jacket = vp().querySelector('.bigjacket');
+  if (jacket && jacket.tagName === 'IMG' && h.olCoverFallback){
+    const swap = () => { if (!coverLooksReal(jacket)) jacket.src = h.olCoverFallback.replace(/-M\.jpg$/, '-L.jpg'); };
+    jacket.complete ? swap() : jacket.addEventListener('load', swap, { once:true });
+    jacket.addEventListener('error', () => { jacket.src = h.olCoverFallback.replace(/-M\.jpg$/, '-L.jpg'); }, { once:true });
+  }
   $('#k-go').onclick = () => commitSuggestion({
     title: h.title, author: h.author, cover: h.cover, isbn: h.isbn, isbn13: h.isbn13,
     buy, description: h.description, pages: h.pages, year: h.year,
