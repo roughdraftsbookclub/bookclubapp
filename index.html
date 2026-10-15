@@ -1707,7 +1707,18 @@ async function googleDescription(title, author){
     const r = await fetch(
       'https://www.googleapis.com/books/v1/volumes?country=US&maxResults=10'
       + `&q=${encodeURIComponent(q)}&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`,
-      { signal: ac.signal }).finally(() => clearTimeout(timer));
+      // The key is restricted to this exact PATH, and a browser sends only
+      // the origin as the referrer on a cross-origin request — so the live
+      // site was getting 403s while a hand-spoofed header from Node passed.
+      // Sending the full referrer is what makes the restriction usable.
+      //
+      // Pinned to a literal rather than letting 'unsafe-url' send
+      // location.href: the organizer's page URL carries ?organizer, and that
+      // has no business being handed to Google in a referrer header. Must
+      // stay same-origin or the fetch spec ignores it.
+      { signal: ac.signal,
+        referrer: 'https://roughdraftsbookclub.github.io/bookclubapp/',
+        referrerPolicy: 'unsafe-url' }).finally(() => clearTimeout(timer));
     if (!r.ok) return null;
     const data = await r.json();
     for (const item of (data.items || [])){

@@ -504,15 +504,28 @@ rather than silently testing nothing.
   than none, because it ships to members as fact.
 - **The key is public, and restriction is what protects it.** It is in page
   source; that is unavoidable in a single-file client app. It is locked to
-  the HTTP referrer `roughdraftsbookclub.github.io/*` **and** to the Books
-  API (YouTube and Translate both answer "requests to this API are blocked"),
-  verified rather than assumed. Note that a referrer header is trivially
-  spoofable outside a browser, so the restriction stops casual reuse on
-  another site rather than a determined actor — the API limit is what keeps
-  the blast radius at "someone else's free Books quota". Two consequences:
-  any move off GitHub Pages must carry the restriction with it, and **a copy
-  served from localhost gets 403s and silently falls back to Open Library
-  alone**, which is the right failure but a confusing one to debug.
+  the HTTP referrer `roughdraftsbookclub.github.io/bookclubapp/*` **and** to
+  the Books API (YouTube and Translate both answer "requests to this API are
+  blocked"), verified rather than assumed. Note that a referrer header is
+  trivially spoofable outside a browser, so the restriction stops casual
+  reuse on another site rather than a determined actor — the API limit is
+  what keeps the blast radius at "someone else's free Books quota". Two
+  consequences: any move off GitHub Pages must carry the restriction with
+  it, and **a copy served from localhost gets 403s and silently falls back
+  to Open Library alone**, which is the right failure but a confusing one
+  to debug.
+- **A browser does not send the path in a cross-origin referrer, and that
+  silently 403'd the live site.** The default `strict-origin-when-cross-
+  origin` policy sends `https://roughdraftsbookclub.github.io/` — origin
+  only — which does not match a key restricted to the `/bookclubapp/` path.
+  It passed every local test because a hand-written `Referer` header from
+  Node *does* carry the path, so the restriction looked fine right up until
+  it ran in a real browser. `googleDescription()` therefore pins an explicit
+  same-origin `referrer` with `referrerPolicy: 'unsafe-url'`. The literal is
+  deliberate rather than letting the policy send `location.href`: the
+  organizer's URL carries `?organizer`, which shouldn't be handed to Google
+  in a header. **Verify any change to this on the deployed site, not
+  locally** — localhost cannot reproduce it in either direction.
 - **Covers are a separate, keyless endpoint and still resolve by ISBN.**
   `books.google.com/books/content?vid=ISBN<isbn>` is a plain image URL — no
   API call, no key — verified against five real shelf ISBNs, and reliably the
