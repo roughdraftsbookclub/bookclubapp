@@ -531,6 +531,16 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 }
 .meetcard .w i{ width:3px; height:3px; border-radius:50%; background:#5B6B82; }
 .meetcard .n{ font-size:13px; color:#7D8CA3; margin-top:5px; }
+/* The venue line becomes a maps link when there is an address to point at.
+   Built from the stored venue + address rather than a saved URL, so it works
+   for every meeting without another column and can't rot the way a shortlink
+   does. The underline is faint on purpose — it should read as tappable
+   without turning the card into a page of links. Padding is for the thumb. */
+.meetcard a.n{
+  display:inline-block; padding:3px 0; text-decoration:underline;
+  text-decoration-color:rgba(125,140,163,.5); text-underline-offset:3px;
+}
+.meetcard a.n:hover, .meetcard a.n:active{ color:#A9B8CE; }
 .meetcard .cd{
   position:absolute; top:14px; right:14px;
   font-size:10.5px; font-weight:700; letter-spacing:.4px;
@@ -1349,6 +1359,28 @@ const plural = (n,s,p) => `${n} ${n===1?s:p}`;
 const bookFacts = b => [b.firstPublishYear, b.pageCount ? `${b.pageCount} pages` : '']
   .filter(Boolean).join(' · ');
 
+/** Is this directions field an actual street address, or a human note?
+    The field holds both: "4005 Trent Pines Dr, Trent Woods, NC 28562" one
+    month and "Park on the street" or "Directions TBA" the next. Only the
+    first kind can be handed to a map — searching for "Directions TBA" sends
+    somebody to the wrong town, which is worse than plain text. Wants a
+    house number and a comma, which an address has and a note doesn't. */
+const looksLikeAddress = s =>
+  !!s && /\d/.test(s) && s.includes(',') && /\d+\s+\S/.test(s.trim());
+
+/** The venue line on the home card: a maps link when there's an address to
+    point at, otherwise the same plain text as before. The query is built
+    from the stored venue and address rather than a saved URL, so it keeps
+    working for every future meeting with no extra column and nothing to
+    rot. &amp; because this string goes through innerHTML. */
+function mapLine(location, note){
+  const text = esc(location) + (note ? ' · ' + esc(note) : '');
+  if (!looksLikeAddress(note)) return `<div class="n">${text}</div>`;
+  const query = encodeURIComponent([location, note].filter(Boolean).join(' '));
+  return `<a class="n" target="_blank" rel="noopener noreferrer"`
+       + ` href="https://www.google.com/maps/search/?api=1&amp;query=${query}">${text}</a>`;
+}
+
 function coverHTML(b, size=''){
   // A real jacket from the lookup wins; otherwise fall back to the drawn cover.
   if (b.coverURL)
@@ -1956,7 +1988,7 @@ function memberHome(){
         <div class="w">
           <span>${esc(c.time)}</span>${c.host ? `<i></i><span>Hosted by ${esc(c.host)}</span>` : ''}
         </div>
-        ${c.location ? `<div class="n">${esc(c.location)}${c.locationNote ? ' · ' + esc(c.locationNote) : ''}</div>` : ''}
+        ${c.location ? mapLine(c.location, c.locationNote) : ''}
         ${days >= 0 ? `<div class="cd">${days === 0 ? 'Tonight' : days === 1 ? 'Tomorrow' : `In ${days} days`}</div>` : ''}
       </div>
 

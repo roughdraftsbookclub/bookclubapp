@@ -345,6 +345,18 @@ schedule: id, sort_index, meeting_date, skip_reason, host, location,
           schedule tile leads to meetings only, not a mixed list.
 ```
 
+**`location_note` holds two different kinds of thing**, and the home card
+treats them differently: a real street address one month ("4005 Trent Pines
+Dr, Trent Woods, NC 28562") and a human note the next ("Park on the street",
+"Directions TBA"). When it looks like an address — `looksLikeAddress()`, which
+wants a house number and a comma — the venue line becomes a **tappable maps
+link** built from venue + address by `mapLine()`; otherwise it stays the plain
+text it always was. Linking "Directions TBA" would send somebody to the wrong
+town, which is worse than not linking at all. No URL is ever stored: the query
+is composed at render time, so it keeps working for every future meeting with
+no extra column and no shortlink to rot. Note the venue only ever appears on
+the **home card** — `memberSchedule()` deliberately shows date and host only.
+
 `phase`: `lobby → approval → shortlist_review → ranked → results`
 
 Seed data is the club's real shelf, imported from
@@ -460,7 +472,8 @@ regex and run them headlessly — no build, no test framework.
 
 ```
 node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
-node tests/engine.js     # 22 — tally, archiving, typed attendance, end-to-end
+node tests/engine.js     # 36 — tally, archiving, typed attendance, the venue
+                          #      line's address test, end-to-end
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
 node tests/lookup.js     # 88 — Open Library parsing/failure modes, edition
                           #      filtering, ISBN conversion both ways, pulling
@@ -473,7 +486,8 @@ node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
 `buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `parseAttendance`,
-`googleVolumeMatches`, `surnameMatches`, `cleanGoogleDescription`, or
+`googleVolumeMatches`, `surnameMatches`, `cleanGoogleDescription`,
+`looksLikeAddress`, `mapLine`, or
 `suggestionWindowState`, run these. The regexes in the
 harnesses are brittle by design — if extraction fails they throw loudly
 rather than silently testing nothing.

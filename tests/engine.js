@@ -23,8 +23,11 @@ const code=[
   grab(/function computeShortlist\(\)\{[\s\S]*?\r?\n\}/,'computeShortlist'),
   grab(/function buildArchiveQueue\(\)\{[\s\S]*?\r?\n\}/,'buildArchiveQueue'),
   grab(/function parseAttendance\([\s\S]*?\r?\n\}/,'parseAttendance'),
+  grab(/const esc = s => [\s\S]*?\r?\n[^\r\n]*\}\[c\]\)\);/,'esc'),
+  grab(/const looksLikeAddress = [\s\S]*?;\r?\n/,'looksLikeAddress'),
+  grab(/function mapLine\([\s\S]*?\r?\n\}/,'mapLine'),
 ].join('\n')+`
-return {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue,parseAttendance};`;
+return {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue,parseAttendance,looksLikeAddress,mapLine};`;
 const A=new Function('STORE','M','book',code)(STORE,M,book);
 const {CONFIG,seedBooks,runIRV,approvalTally,computeShortlist,buildArchiveQueue,parseAttendance}=A;
 STORE.books=seedBooks();
@@ -128,6 +131,42 @@ check('D2 nobody ranks deeper than configured', rb.every(b=>b.length<=CONFIG.ran
 check('D3 winner came from the shortlist', shortlist.includes(res.winner));
 check('D4 ballots conserved in every round',
   res.rounds.every(r=>r.active+r.exhausted===rb.length));
+
+// ---- the venue line on the home card -------------------------------------
+// location_note holds two different kinds of thing: a real street address one
+// month, a human note like "Park on the street" the next. Only the first can
+// be handed to a map — linking "Directions TBA" sends somebody to the wrong
+// town, which is worse than leaving it as plain text.
+console.log('\nvenue line / maps link');
+const LA = A.looksLikeAddress, ML = A.mapLine;
+check('A1 full street address',        LA('4005 Trent Pines Dr, Trent Woods, NC 28562'));
+check('A2 address, no zip',            LA('112 Middle St, New Bern, NC'));
+check('A3 "Directions TBA" is not one',!LA('Directions TBA'));
+check('A4 "Park on the street"',       !LA('Park on the street'));
+check('A5 a street with no number',    !LA('Middle Street'));
+check('A6 empty / missing',            !LA('') && !LA(null) && !LA(undefined));
+check('A7 bare number, no comma',      !LA('Apartment 4'));
+
+check('A8 address -> anchor with both parts',
+  (()=>{ const h = ML('Eastern Carolina Yacht Club','4005 Trent Pines Dr, Trent Woods, NC 28562');
+         return h.startsWith('<a ') && h.includes('Eastern Carolina Yacht Club')
+             && h.includes('4005 Trent Pines Dr'); })());
+check('A9 query carries venue AND address',
+  ML('Eastern Carolina Yacht Club','4005 Trent Pines Dr, Trent Woods, NC 28562')
+    .includes(encodeURIComponent('Eastern Carolina Yacht Club 4005 Trent Pines Dr, Trent Woods, NC 28562')));
+check('A10 opens safely in a new tab',
+  (()=>{ const h = ML('X Club','1 A St, Town, NC 1');
+         return h.includes('target="_blank"') && h.includes('rel="noopener noreferrer"'); })());
+check('A11 non-address note stays plain text',
+  ML('Ken Wilkins','Directions TBA') === '<div class="n">Ken Wilkins · Directions TBA</div>');
+check('A12 no note at all stays plain text',
+  ML('Ken Wilkins','') === '<div class="n">Ken Wilkins</div>');
+check('A13 ampersand is encoded for innerHTML',
+  ML('X Club','1 A St, Town, NC 1').includes('&amp;query='),
+  'a bare & in an innerHTML attribute is a parsing hazard');
+check('A14 venue name is escaped, not injected',
+  (()=>{ const h = ML('<script>x</script>','1 A St, Town, NC 1');
+         return !h.includes('<script>') && h.includes('&lt;script&gt;'); })());
 
 console.log('\n'+pass+' passed, '+fail+' failed');
 process.exit(fail?1:0);
