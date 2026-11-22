@@ -134,8 +134,29 @@ readable in page source.
 
 ### Suggesting a book
 
-Title is the only required field. Author is optional. There is **no "why do you
-recommend it"** field — deliberately removed.
+Title is the only required field. Author is optional.
+
+**Resolved: there IS an optional note from the suggester now** (`member_note`,
+`supabase/patch_11.sql`) — "Anything you want to say about it", capped at 280
+characters, rendered on the book's detail page as a quoted line above a gold
+rule. This **reverses** the original "no *why do you recommend it* field"
+decision; the organizer asked for it on 2026-11-22. Don't remove it again on
+the strength of the old note — but the 280-character cap is the part that
+keeps the original reasoning alive, so don't lift that without asking. It is
+anonymous like everything else member-facing ("From the member who suggested
+it", never a name), and the organizer can edit or clear it from the book edit
+form, which is the only way to take down free text a member put in front of
+the whole club.
+
+Three things worth knowing:
+- The note is typed on the suggest screen but committed two or three screens
+  later (pick a match → pick an edition → confirm), so it is held in a
+  module-level `suggestionNote` draft rather than threaded through every
+  call, same pattern as `attendanceDraft`. It clears only on a **successful**
+  write, so a failed insert doesn't make the member retype it.
+- A note alone never enables Submit. A note is not a suggestion.
+- `update_book` gained `p_member_note`, and patch_11 **drops the old
+  signature first** — see the overload trap under the schedule notes.
 
 The flow is three or four screens and **nothing is ever written to the shelf
 without the member seeing it**:
@@ -311,7 +332,7 @@ books:    id, title, author, isbn, isbn13, cover_url, cover_large, amazon,
           added_at, by_token, needs_review,
           meetings_considered, zero_vote_streak, shortlist_misses,
           ever_shortlisted, archive_reason, archived_at, date_read,
-          description, page_count, first_publish_year
+          description, page_count, first_publish_year, member_note
 meetings: id, date, is_practice, phase, is_current, candidate_ids[],
           shortlist_ids[], cut_short, result, archive_queue, expected_voters
 ballots:  id, meeting_id, token, phase (approval|ranked), book_ids[]
@@ -501,6 +522,21 @@ rather than silently testing nothing.
 
 - **GitHub Pages is case-sensitive.** `INDEX.HTML` returns 404. It must be
   lowercase `index.html`. Case-only renames in git may need two commits.
+- **A column the client writes must exist BEFORE the client ships.**
+  `commitSuggestion()` inserts a plain row object, so a key naming a column
+  Postgres doesn't have fails the whole insert — the member gets "Couldn't
+  add that" and no book, not a book missing one field. Same for an RPC: the
+  client sending a parameter the deployed function doesn't declare gets
+  PGRST202 and the call simply fails. So `supabase/patch_N.sql` runs FIRST,
+  then the push. This is the one place in this project where deploy order is
+  load-bearing rather than a nicety.
+- **PGRST202 usually means a wrong parameter NAME, not a missing function.**
+  Probing the live RPCs on 2026-11-22, six came back "not deployed" and all
+  six were the probe's own argument names being wrong (`p_phase` for
+  `p_new_phase`, `p_n` for `p_count`, and four that needed their full
+  parameter list). PostgREST matches an overload by the exact set of named
+  arguments. Check the signature in `schema.sql`/`patch_*.sql` before
+  concluding anything is missing.
 - **Google Books ISBN lookup does not work, with or without a key.** This is
   the single most expensive thing to rediscover here. `q=isbn:<isbn>` returns
   `totalItems: 0` for *every* ISBN — 10- and 13-digit, with and without

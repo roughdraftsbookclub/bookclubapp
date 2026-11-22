@@ -715,6 +715,21 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   font-size:13.5px; color:var(--ink-2); line-height:1.6; text-align:left;
   margin-top:16px; white-space:pre-line;
 }
+/* The optional note whoever suggested the book left for the group. Set in
+   quotes and indented off a gold rule so it reads as somebody's voice and
+   not as more catalogue copy sitting under the publisher's blurb. No name:
+   members are anonymous everywhere (see CLAUDE.md), and this is the one
+   place a free-text field could have leaked one. */
+.detail .membernote{
+  margin-top:16px; padding:2px 0 2px 13px; border-left:2px solid var(--gold);
+  font-size:13.5px; line-height:1.6; color:var(--ink-2);
+  text-align:left; white-space:pre-line; font-style:italic;
+}
+.detail .membernote .who{
+  display:block; margin-top:7px; font-style:normal;
+  font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  color:#7A5A16;                      /* gold on cream is too weak at this size */
+}
 .divider{ height:1px; background:var(--hair); margin:18px 0; }
 .bigjacket{
   width:150px; height:auto; border-radius:4px; display:block; margin:0 auto;
@@ -2043,6 +2058,12 @@ function renderMember(){
    Nominating is open between meetings and in the lobby, and locks the moment
    Phase One opens — the candidate list must not move under a ballot already
    in progress. */
+/* The optional "anything you want to say about it" note from the suggest
+   screen. Survives the two or three screens between typing it and the book
+   actually being written, and is cleared once that write succeeds so the
+   next suggestion starts blank. */
+let suggestionNote = '';
+
 let memberNav = { screen:'home', bookId:null };
 const nav = () => memberNav;
 const goto = (screen, bookId=null) => {
@@ -2358,6 +2379,8 @@ function memberBookDetail(){
           <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2H2v10h10V9"/><path d="M8.5 1.5H12.5V5.5"/><path d="M12.5 1.5 6.5 7.5"/></svg>
         </a>` : ''}
         <p class="desc">${b.description ? esc(b.description) : 'No description found yet — the organizer can add one.'}</p>
+        ${b.memberNote ? `<div class="membernote">${esc(b.memberNote)}
+          <span class="who">From the member who suggested it</span></div>` : ''}
         ${b.status === 'archived' ? `
           <div class="helpnote" style="margin-top:2px">${esc(b.archiveReason || "Didn't get enough votes last time")}</div>
           <button class="btn btn-primary btn-sm" id="d-reactivate" style="width:100%;margin-top:12px">Reactivate</button>
@@ -2392,8 +2415,6 @@ function memberNominate(){
       <h1 style="font-size:24px;margin-top:20px">Suggest a Book</h1>
     </header>
     <div class="body pad-lg">
-      <p class="formintro">Just the title is enough.<br>We'll find the rest.</p>
-
       ${/* The link box comes first on purpose. Typing a title makes the app
             guess which edition you meant, and for older books it guesses
             badly — it offers "L'étranger" for The Stranger and dates
@@ -2428,6 +2449,20 @@ function memberNominate(){
         If there's more than one book by this name, adding the author saves
         the organiser a guess. Otherwise don't worry about it.
       </div>
+
+      ${/* Applies to BOTH routes above, so it sits below them rather than
+            inside either. Capped at 280 characters on purpose: the brief's
+            governing rule is that the app isn't the book club, and an
+            uncapped box invites a review that nobody reads on a phone. */''}
+      <div class="field" style="margin-top:4px">
+        <label for="n-note">Anything you want to say about it
+          <span class="opt">optional</span></label>
+        <textarea class="control" id="n-note" maxlength="280" rows="3"
+          placeholder="A line for the group — why you picked it, who'd like it"></textarea>
+        <div class="helpnote" style="margin-top:7px">
+          Shown on the book's page. It won't say who wrote it.
+        </div>
+      </div>
       <div style="height:6px"></div>
     </div>
     <div class="actionbar">
@@ -2435,6 +2470,18 @@ function memberNominate(){
     </div>`;
 
   const t = $('#n-t'), a = $('#n-a'), u = $('#n-url'), go = $('#n-go');
+
+  /* The note is written here but committed two or three screens later (pick
+     a match → pick an edition → confirm), so it is held in a module-level
+     draft rather than threaded through every one of those calls. Same
+     reasoning as attendanceDraft. Deliberately NOT part of check() below:
+     a note on its own is not a suggestion. */
+  const note = $('#n-note');
+  if (note){
+    note.value = suggestionNote;
+    note.oninput = () => { suggestionNote = note.value; };
+  }
+
   /* Either route is enough on its own. The link box only has to be NON-EMPTY
      — deliberately not `parseAmazonISBN(...)`. Gating the button on a
      successful parse left Submit greyed out for exactly the links members
@@ -2838,6 +2885,7 @@ async function commitSuggestion({ title, author, cover, isbn, isbn13, buy, descr
     description: description || null,
     page_count: pages || null,
     first_publish_year: year ? Number(year) : null,
+    member_note: suggestionNote.trim() ? suggestionNote.trim().slice(0, 280) : null,
   };
 
   const { error } = await supa.from('books').insert(row);
@@ -2845,6 +2893,9 @@ async function commitSuggestion({ title, author, cover, isbn, isbn13, buy, descr
     toast("Couldn't add that — check your connection and try again");
     return;
   }
+  // Only once the write actually succeeded — a failed insert keeps the note
+  // so the member can retry without retyping it.
+  suggestionNote = '';
   STORE.books.push(bookFromRow(row));
 
   // A book added before voting opens joins tonight's ballot. No passcode —
@@ -3502,6 +3553,11 @@ function bookEditFormHTML(b){
     <div style="height:9px"></div>
     <label class="flabel" for="e-desc">Description</label>
     <textarea class="control" id="e-desc" style="min-height:70px">${esc(b.description||'')}</textarea>
+
+    ${/* Editable because it has to be: it's the only free text a member can
+          put in front of the whole club, and clearing the box removes it. */''}
+    <label class="flabel" for="e-note">Member's note <span class="opt">shown on the book page</span></label>
+    <textarea class="control" id="e-note" maxlength="280" style="min-height:56px">${esc(b.memberNote||'')}</textarea>
     <div style="height:12px"></div>
     <button class="btn btn-primary btn-sm" data-save-edit="${b.id}">Save</button>
     <button class="btn btn-ghost btn-sm" data-cancel-edit="1">Cancel</button>
@@ -3684,6 +3740,7 @@ function adminBooks(el){
     const year = $('#e-year').value.trim();
     const pages = $('#e-pages').value.trim();
     const description = $('#e-desc').value.trim();
+    const memberNote = $('#e-note').value.trim();
     // isbn13 isn't in this form yet — carry the existing value through
     // rather than wiping it to null.
     const { error } = await supa.rpc('update_book', {
@@ -3692,12 +3749,13 @@ function adminBooks(el){
       p_cover_url: coverURL || null, p_cover_large: coverLarge || null, p_amazon: amazon || null,
       p_description: description || null, p_page_count: pages ? Number(pages) : null,
       p_first_publish_year: year ? Number(year) : null,
+      p_member_note: memberNote || null,
     });
     if (error){ toast('Could not save — try again'); return; }
     const b = book(id);
     Object.assign(b, { title, author, isbn, coverURL, coverLarge, amazon, needsReview: false,
       description: description || null, pageCount: pages ? Number(pages) : null,
-      firstPublishYear: year ? Number(year) : null });
+      firstPublishYear: year ? Number(year) : null, memberNote: memberNote || null });
     editingBookId = null;
     toast('Saved'); renderAdmin();
   });
@@ -3946,6 +4004,7 @@ function bookFromRow(r){
     description: r.description ?? null,
     pageCount: r.page_count ?? null,
     firstPublishYear: r.first_publish_year ?? null,
+    memberNote: r.member_note ?? null,
   };
 }
 
