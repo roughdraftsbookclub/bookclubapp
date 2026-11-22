@@ -575,11 +575,30 @@ rather than silently testing nothing.
   to the real product page, but amazon.com sends no CORS headers, so the
   browser will not expose the `Location` header or the body to page JS, and
   `redirect:'manual'` yields an opaque response with no URL. This is not a
-  bug to work around in `index.html` — it needs a server to do the hop (a
-  Supabase edge function is the obvious home). Until then the suggestion
-  screen *names* the problem instead of failing silently. Note that Amazon's
-  mobile app Share button produces exactly this link, so it is the most
-  common thing a member will paste, not an edge case.
+  bug to work around in `index.html` — it needs a server to do the hop.
+  **Resolved: the `amazon-book` edge function is that hop**
+  (`supabase/functions/`, deployed 2026-11-22, runbook in that folder's
+  README). It is allowlisted to five Amazon shorteners, follows redirects
+  manually, never reads the response body and returns only an ISBN-10 or a
+  reason code. `resolveShortLink()` in `index.html` returns null on any
+  failure and every caller falls back to the explain-the-link screen, so an
+  undeployed or broken function degrades to the previous behaviour rather
+  than breaking the suggestion flow — verified with the function absent.
+  Note that Amazon's mobile app Share button produces exactly this link, so
+  it is the most common thing a member will paste, not an edge case.
+- **The storefront blocks bots; the shortener doesn't.** Measured
+  2026-11-22: `amazon.com/dp/<isbn>` answers **200** to a browser
+  `User-Agent` and **503** to a default one, while `a.co` is a separate
+  service (`amazontinyurl`) that answers server-side clients cleanly and
+  404s a bad code as JSON. So `amazon-book` reads a.co's *first* `Location`
+  header — which already carries `/dp/<ASIN>` — and never touches the
+  storefront at all. Don't "improve" it by following the redirect to the
+  product page; that trades one fast request for a 503.
+- **Verify an edge function against the deployed endpoint, not the source.**
+  Two defects in this feature were invisible in code review and obvious from
+  one curl: the client accepted scheme-less `a.co/d/…` while the function
+  refused it, and a redeploy silently didn't take. Every response now carries
+  `"v":<VERSION>` so "is my build live?" has an answer. Bump it on deploy.
 - **Never gate a Submit button on the input parsing.** The link box's Submit
   was `disabled` unless `parseAmazonISBN` succeeded, which meant the one
   branch that explained a bad link was unreachable: you could not click the

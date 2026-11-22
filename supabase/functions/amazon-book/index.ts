@@ -37,6 +37,12 @@
  * stranger can do with this endpoint is expand Amazon short links.
  */
 
+/* Bump on every deploy. Returned in every response so "is the new build
+   actually live?" is a question with an answer, instead of something
+   inferred from behaviour. Added after a redeploy silently didn't take and
+   the only clue was an ftp: URL getting further than it should have. */
+const VERSION = 2;
+
 const SHORTENERS = new Set(['a.co', 'amzn.to', 'amzn.eu', 'amzn.asia', 'amzn.com']);
 const MAX_HOPS = 4;
 const TIMEOUT_MS = 8000;
@@ -60,8 +66,8 @@ const cors = (origin: string | null) => ({
   'Vary': 'Origin',
 });
 
-const json = (body: unknown, status: number, origin: string | null) =>
-  new Response(JSON.stringify(body), {
+const json = (body: Record<string, unknown>, status: number, origin: string | null) =>
+  new Response(JSON.stringify({ ...body, v: VERSION }), {
     status,
     headers: { ...cors(origin), 'Content-Type': 'application/json' },
   });
@@ -70,6 +76,24 @@ const hostOf = (u: string): string | null => {
   try { return new URL(u).hostname.toLowerCase().replace(/^www\./, ''); }
   catch { return null; }
 };
+
+/* Members paste what they copied, and that sometimes arrives without a
+   scheme ("a.co/d/XXXXXXX"). index.html's classifyAmazonLink accepts that
+   shape and routes it here, so this has to agree or the client would send a
+   link only to have it bounced. Found by testing the deployed function
+   rather than by reading the code.
+
+   Adding a scheme cannot widen the allowlist: "evil.test/a.co/d/X" still
+   parses to host evil.test and is refused. Non-web schemes are rejected
+   outright so file:/ftp:/data: can never reach the fetch. */
+function normalizeURL(raw: string): string | null {
+  let s = raw.trim();
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = 'https://' + s;
+  let u: URL;
+  try { u = new URL(s); } catch { return null; }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
+  return u.toString();
+}
 
 const isShortener = (u: string) => { const h = hostOf(u); return !!h && SHORTENERS.has(h); };
 
@@ -115,6 +139,10 @@ Deno.serve(async (req: Request) => {
   }
 
   if (!url || url.length > 300) return json({ ok: false, reason: 'badrequest' }, 400, origin);
+
+  const normalized = normalizeURL(url);
+  if (!normalized) return json({ ok: false, reason: 'badrequest' }, 400, origin);
+  url = normalized;
 
   // The gate. Anything that is not an Amazon shortener stops here, before
   // any outbound request is made.

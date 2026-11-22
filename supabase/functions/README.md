@@ -29,7 +29,25 @@ variables, and touches no table.
 
 ---
 
-## 2. Check it answers — refusals first
+## 2. Confirm the build you just pushed is the one that's live
+
+Every response carries `"v":<n>`, matching `VERSION` at the top of
+`index.ts`. **Bump it on every deploy.** This exists because a redeploy once
+silently didn't take, and the only clue was an `ftp:` URL getting one step
+further than it should have — which is a terrible way to find out you're
+testing an old build.
+
+```bash
+curl -s -X POST "https://xshhhizeotzfcgfioezq.supabase.co/functions/v1/amazon-book" -H "Content-Type: application/json" -d '{"url":"https://a.co/d/0000000"}'
+```
+
+Expect `{"ok":false,"reason":"deadlink","v":2}`. `deadlink` here is a success
+signal: it means the function reached a.co and a.co said 404, so the whole
+outbound path works. If `v` is behind, the deploy didn't land — re-run it
+from the repo root, and note that pasting into the dashboard will re-upload
+whatever is in the dashboard editor, not what's on disk.
+
+## 3. Check it answers — refusals first
 
 Run these three before testing a real link. They prove the guard works, and
 none of them makes an outbound request.
@@ -52,7 +70,7 @@ model and it has to hold.
 
 ---
 
-## 3. Check it resolves a real link
+## 4. Check it resolves a real link
 
 Open Amazon, find any book's **paperback or hardcover** page, use the Share
 button to get an `a.co/d/...` link, and run:
@@ -73,7 +91,7 @@ Other reasons you may see, all `ok:false`: `deadlink` (a.co 404),
 
 ---
 
-## 4. Wire up the client
+## 5. Wire up the client
 
 Already written and committed — `index.html` calls this function whenever a
 pasted link is an Amazon shortener, and falls back to the existing
