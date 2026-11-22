@@ -2411,6 +2411,24 @@ function memberNominate(){
       // branch used to be unreachable: Submit was gated on the link parsing,
       // so the member just saw a dead button. It now lands on a screen that
       // names what kind of link they pasted.
+      //
+      // An Amazon shortener (a.co/… from the Share button) is the one case
+      // worth a server round trip first: the browser cannot follow it, but
+      // the amazon-book edge function can. Every failure falls through to
+      // the same screen as before, so a function that isn't deployed, is
+      // down, or is slow costs the member nothing but the spinner.
+      if (classifyAmazonLink(link) === 'shortened'){
+        go.innerHTML = '<span class="spin"></span>Opening the link…';
+        const r = await resolveShortLink(link);
+        if (r && r.ok && r.isbn){
+          const hit = await lookupByISBN(r.isbn);
+          if (hit && hit.found) return memberConfirmBook(hit, hit.title, hit.author, []);
+          return memberNoMatch('ISBN ' + r.isbn, '', true, true);
+        }
+        // 'kindle' means it resolved fine and landed on a Kindle edition —
+        // a more useful thing to say than "that's a Share link".
+        return memberBadLink(link, r && r.reason === 'kindle' ? 'kindle' : null);
+      }
       return memberBadLink(link);
     }
 
@@ -2426,10 +2444,34 @@ function memberNominate(){
 }
 
 /** Nothing came back, or the lookup couldn't run. Always the member's call. */
+/* Ask the amazon-book edge function to follow an Amazon short link and hand
+   back the print ISBN-10. See supabase/functions/amazon-book/index.ts for
+   why this cannot be done in the browser (no CORS on amazon.com, so the
+   Location header of the 302 is unreadable from page JS).
+
+   Returns the function's {ok, isbn} / {ok:false, reason} shape, or null if
+   the call could not be made at all. Never throws: every caller treats a
+   null as "show the explain-the-link screen", which is exactly what the app
+   did before this function existed, so an undeployed or failing function is
+   a silent no-op rather than a broken suggestion flow. */
+async function resolveShortLink(url){
+  try {
+    if (!supa) return null;          // inside the try: `supa` is declared with
+                                     // `let` further down this same scope.
+    const { data, error } = await supa.functions.invoke('amazon-book', { body: { url } });
+    if (error) return null;
+    return data || null;
+  } catch { return null; }
+}
+
 /* A link that doesn't carry a print ISBN. Deliberately a screen and not a
    toast: the 2.6s toast it replaced could not say which of four different
    wrong-link shapes the member had, and CLAUDE.md's rule is that every
    failure mode lands on a screen.
+
+   `forceKind` overrides the guess from the URL's shape — used when the edge
+   function actually resolved the link and found a Kindle edition behind it,
+   which the raw a.co URL gives no way to know.
 
    There is no "add it anyway" here on purpose — unlike every other failure
    in this flow we have nothing to add. A URL is not a title.
@@ -2440,8 +2482,8 @@ function memberNominate(){
    yields an opaque response with no URL. This is not a thing a client-side
    app can work around — it needs a server to do the hop (see the edge
    function note in CLAUDE.md). */
-function memberBadLink(link){
-  const kind = classifyAmazonLink(link);
+function memberBadLink(link, forceKind){
+  const kind = forceKind || classifyAmazonLink(link);
   const SAY = {
     shortened: {
       h: 'That\'s a Share link',
