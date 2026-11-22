@@ -1608,10 +1608,16 @@ async function fetchWorkDescription(workKey){
    So Google supplies DESCRIPTIONS and nothing else. Page count and year
    stay with Open Library and with the organizer, who can see and fix both.
 
-   Covers are separate and need NO key: books.google.com/books/content
-   ?vid=ISBN<isbn> is a plain image URL that does still resolve by ISBN.
-   When Google has no jacket it serves a ~1.2KB PNG placeholder rather than
-   404ing, which is why coverLooksReal() below checks the loaded size.
+   Covers come from the SAME API call as the description, via
+   volumeInfo.imageLinks. They used to be built blind as
+   books.google.com/books/content?vid=ISBN<isbn>, a keyless URL that does
+   resolve by ISBN — but it answers 200 with a placeholder jacket when
+   Google has no cover, so books ended up on the shelf showing a grey
+   "no cover" graphic as though it were their own artwork. There are two
+   such placeholders and the original size check caught neither; see
+   coverLooksReal() below for the measurements. imageLinks is simply absent
+   when no jacket exists, so presence is the signal and nothing has to be
+   inferred from the image itself.
 
    The key ships in page source — it cannot be hidden in a single-file
    client app. It is restricted to the HTTP referrer
@@ -1625,14 +1631,30 @@ async function fetchWorkDescription(workKey){
 // string disables every Google call and falls back to Open Library alone.
 const GOOGLE_BOOKS_KEY = 'AIzaSyCe7U42qo8V8U6lXaFI6fBPW6JSN8DxEQ0';
 
-const googleCover = (isbn, zoom = 1) =>
-  `https://books.google.com/books/content?vid=ISBN${isbn}&printsec=frontcover&img=1&zoom=${zoom}`;
+/** Google answers 200 with a placeholder jacket rather than 404ing when it
+    has no cover, so "did it load" isn't enough.
 
-/** Google serves a small PNG placeholder rather than 404ing when it has no
-    jacket, so "did it load" isn't enough — a real cover is wider than the
-    placeholder. Used to decide whether to keep Google's cover or fall back. */
+    There are TWO placeholders, not one, and the original ≥80×100 test caught
+    neither. Measured across all 43 shelf ISBNs on 2026-11-22:
+
+      128×170, 1,269B PNG   — placeholder (3 books)
+      128×184, 10,794B JPEG — placeholder (4 books), byte-identical each time
+      128×192 … 128×229     — 36 real covers, never 184 or 170
+
+    At zoom=1 Google pins width to 128 and lets height follow the aspect
+    ratio, so the two placeholder shapes are exact constants worth matching
+    exactly. A height floor would be guesswork; these are measurements.
+
+    Prefer not needing this at all: resolveEdition now takes the cover from
+    the Books API's imageLinks, which is absent unless a real jacket exists.
+    This stays for book records written before that, whose cover_url already
+    points at a vid=ISBN URL that may resolve to a placeholder. */
+const GOOGLE_PLACEHOLDER_DIMS = [[128, 170], [128, 184]];
+
 function coverLooksReal(img){
-  return !!img && img.naturalWidth >= 80 && img.naturalHeight >= 100;
+  if (!img || img.naturalWidth < 80 || img.naturalHeight < 100) return false;
+  return !GOOGLE_PLACEHOLDER_DIMS.some(
+    ([w, h]) => img.naturalWidth === w && img.naturalHeight === h);
 }
 
 /** Lowercased, punctuation-free words for comparison.
@@ -1780,8 +1802,40 @@ function cleanGoogleDescription(raw, title){
 /** A description for a book Open Library had none for, or null. Never throws
     and never blocks: every caller treats it as a bonus. Searches by title and
     author because ISBN search returns nothing — see the note above. */
-async function googleDescription(title, author){
-  if (!GOOGLE_BOOKS_KEY || !title) return null;
+/* Turn a volumeInfo.imageLinks block into a usable jacket URL, or null.
+
+   The point of going through the API for covers: imageLinks is ABSENT when
+   Google has no jacket, whereas the keyless vid=ISBN endpoint always answers
+   200 and hands back a placeholder. Presence here is the signal that a real
+   cover exists; nothing has to be inferred from the pixels.
+
+   Two fixups on the URL Google gives, both pure string work:
+   - it often comes back http://, which a page served over https blocks as
+     mixed content — the jacket would silently never appear.
+   - &edge=curl draws a fake page-curl on the right edge. Fine in a search
+     result, wrong on a book card that sits next to real jackets.
+
+   DO NOT raise the zoom to get a bigger jacket. It is tempting (zoom=1 is
+   only 128px wide) and it is wrong: measured 2026-11-22, The Road returns a
+   proper 575x883 at zoom=3, but The Track of the Cat — a Google-digitized
+   library scan — returns a 575x92 PNG SLIVER, a thin strip rather than a
+   cover. Which behaviour you get depends on how Google holds that volume,
+   and there is no way to tell from the URL. Use what the API hands back. */
+function googleImageURL(imageLinks){
+  const raw = imageLinks && (imageLinks.thumbnail || imageLinks.smallThumbnail);
+  if (!raw) return null;
+  return String(raw).replace(/^http:\/\//i, 'https://').replace(/&edge=curl/gi, '');
+}
+
+/* Returns { description, cover } from the first volume that passes
+   googleVolumeMatches(). Either field can be null.
+
+   Was googleDescription(), which returned a string and skipped any volume
+   without a description — so a volume carrying a real jacket but no blurb
+   was discarded. The two are now collected independently, because Google
+   frequently has one and not the other. */
+async function googleLookup(title, author){
+  if (!GOOGLE_BOOKS_KEY || !title) return { description: null, cover: null };
   const q = [title, author].filter(Boolean).join(' ');
   const url = 'https://www.googleapis.com/books/v1/volumes?country=US&maxResults=10'
     + `&q=${encodeURIComponent(q)}&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`;
@@ -1823,21 +1877,24 @@ async function googleDescription(title, author){
         await new Promise(res => setTimeout(res, 300 + attempt * 400));
         continue;
       }
-      if (!r.ok) return null;
+      if (!r.ok) return { description: null, cover: null };
       const data = await r.json();
+      let description = null, cover = null;
       for (const item of (data.items || [])){
         const v = item.volumeInfo || {};
-        if (!v.description || !googleVolumeMatches(v, title, author)) continue;
-        const d = cleanGoogleDescription(v.description, title);
-        if (d) return d;
+        if (!googleVolumeMatches(v, title, author)) continue;   // wrong book
+        if (!description && v.description)
+          description = cleanGoogleDescription(v.description, title);
+        if (!cover) cover = googleImageURL(v.imageLinks);
+        if (description && cover) break;
       }
-      return null;                      // a real answer: Google has nothing
+      return { description, cover };    // a real answer, even if both null
     } catch (e){
       clearTimeout(timer);
       await new Promise(res => setTimeout(res, 300 + attempt * 400));
     }
   }
-  return null;
+  return { description: null, cover: null };
 }
 
 /**
@@ -1893,20 +1950,25 @@ async function lookupByISBN(isbn10){
   const workKey = (doc && doc.key) || (edition && edition.works && edition.works[0] && edition.works[0].key);
   out.description = workKey ? await fetchWorkDescription(workKey) : null;
 
-  // Google is a DESCRIPTION fallback and nothing else — its page counts are
-  // the ebook's and its dates are the printing's, both measured wrong against
-  // real shelf books (see the note above it). It can only run when Open
-  // Library gave us a title to search with, because Google's own ISBN lookup
-  // returns nothing at all.
-  if (!out.description && out.title)
-    out.description = await googleDescription(out.title, out.author);
+  // Google supplies a DESCRIPTION and a COVER, and nothing else — its page
+  // counts are the ebook's and its dates are the printing's, both measured
+  // wrong against real shelf books (see the note above it). It can only run
+  // when Open Library gave us a title to search with, because Google's own
+  // ISBN lookup returns nothing at all.
+  //
+  // The cover comes from the API's imageLinks rather than the keyless
+  // vid=ISBN URL this used to build blind. That endpoint answers 200 with a
+  // placeholder jacket when Google has nothing, which put a grey "no cover"
+  // image on the shelf presented as the book's own — 7 of 43 books on the
+  // real shelf, two of them active. imageLinks is simply absent when there
+  // is no jacket, so there is nothing to detect.
+  const g = (out.title) ? await googleLookup(out.title, out.author)
+                        : { description: null, cover: null };
+  if (!out.description) out.description = g.description;
 
-  // Keyless, and independent of everything above: Google's cover by ISBN.
-  // Offered first with the Open Library one kept as the fallback the form
-  // swaps to if Google turns out to be serving its placeholder.
-  out.googleCover = googleCover(isbn10, 1);
+  // Open Library's jacket stays as the fallback the confirm form swaps to.
   out.olCoverFallback = out.cover || '';
-  if (out.googleCover) out.cover = out.googleCover;
+  if (g.cover) out.cover = g.cover;
 
   out.found = !!(out.title);
   return out;
@@ -2622,8 +2684,11 @@ async function resolveEdition(hit, rawTitle, rawAuthor, hits){
   // Open Library has no blurb for a great many older books, and none at all
   // for anything it hasn't catalogued. Only reached when OL came back empty,
   // so the common path still costs one request, not two.
+  // Description only on this path. The cover here comes from Open Library's
+  // edition/work record (see mergeEditionIntoHit), never from Google, so the
+  // placeholder problem that hit lookupByISBN was never reachable from here.
   const description = olDescription
-    || await googleDescription(hit.title, hit.author);
+    || (await googleLookup(hit.title, hit.author)).description;
   if (editions.length >= 2) return memberPickEdition(hit, editions, description, rawTitle, rawAuthor, hits);
   return memberConfirmBook(mergeEditionIntoHit(hit, editions[0] || null, description), rawTitle, rawAuthor, hits);
 }

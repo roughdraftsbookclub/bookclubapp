@@ -7,6 +7,9 @@ const code=[src.match(/const olCover = [^\n]*/)[0],
             src.match(/function isbn10to13\([\s\S]*?\r?\n\}/)[0],
             src.match(/function parseAmazonISBN\([\s\S]*?\r?\n\}/)[0],
             src.match(/function classifyAmazonLink\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function googleImageURL\([\s\S]*?\r?\n\}/)[0],
+            src.match(/const GOOGLE_PLACEHOLDER_DIMS = [^\n]*/)[0],
+            src.match(/function coverLooksReal\([\s\S]*?\r?\n\}/)[0],
             src.match(/function buildAmazonLink\([\s\S]*?\r?\n\}/)[0],
             src.match(/const OL_HEADERS = [^\n]*/)[0],
             src.match(/async function lookupBook[\s\S]*?\r?\n\}(?=\r?\n)/)[0],
@@ -38,7 +41,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,googleImageURL,coverLooksReal,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -149,6 +152,53 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
   // Ordering guard: a parseable ISBN wins even on a shortener host.
   ck('shortener carrying a real ISBN is ok',
     cl('https://amzn.to/dp/0141393394')==='ok');
+
+  // ---- googleImageURL + coverLooksReal ------------------------------------
+  // Google answers 200 with a placeholder jacket instead of 404ing, so a book
+  // with no cover was showing a grey "no cover" graphic as if it were its own
+  // artwork. Measured across all 43 shelf ISBNs on 2026-11-22: two distinct
+  // placeholders (128x170 PNG, 128x184 JPEG), 36 real covers at 192-229 tall.
+  console.log('\ngoogleImageURL');
+  const gi = fns.googleImageURL;
+  ck('null when there are no imageLinks', gi(undefined)===null && gi(null)===null && gi({})===null);
+  ck('prefers thumbnail over smallThumbnail',
+    gi({thumbnail:'https://x/t.jpg', smallThumbnail:'https://x/s.jpg'})==='https://x/t.jpg');
+  ck('falls back to smallThumbnail',
+    gi({smallThumbnail:'https://x/s.jpg'})==='https://x/s.jpg');
+  // http:// would be blocked as mixed content on the https site — the jacket
+  // would silently never appear.
+  ck('upgrades http to https',
+    gi({thumbnail:'http://books.google.com/books/content?id=A'})
+      ==='https://books.google.com/books/content?id=A');
+  ck('strips the fake page-curl edge',
+    gi({thumbnail:'https://books.google.com/books/content?id=A&edge=curl&zoom=1'})
+      ==='https://books.google.com/books/content?id=A&zoom=1');
+  ck('upgrades and strips together',
+    gi({thumbnail:'http://x/c?id=A&edge=curl'})==='https://x/c?id=A');
+  ck('leaves an already-clean https URL alone',
+    gi({thumbnail:'https://x/c?id=A&zoom=1'})==='https://x/c?id=A&zoom=1');
+  // Raising the zoom for a bigger jacket is a trap: The Road gives a proper
+  // 575x883 at zoom=3, but a Google-digitized scan like The Track of the Cat
+  // gives a 575x92 sliver. zoom must survive untouched.
+  ck('does NOT rewrite the zoom parameter',
+    gi({thumbnail:'https://books.google.com/books/content?id=A&img=1&zoom=1&source=gbs_api'})
+      ==='https://books.google.com/books/content?id=A&img=1&zoom=1&source=gbs_api');
+
+  console.log('\ncoverLooksReal');
+  const px = (w,h) => ({ naturalWidth:w, naturalHeight:h });
+  ck('null/undefined is not real', !fns.coverLooksReal(null) && !fns.coverLooksReal(undefined));
+  ck('128x170 PNG placeholder rejected',  !fns.coverLooksReal(px(128,170)));
+  ck('128x184 JPEG placeholder rejected', !fns.coverLooksReal(px(128,184)));
+  ck('128x192 real cover accepted',  fns.coverLooksReal(px(128,192)));
+  ck('128x193 real cover accepted',  fns.coverLooksReal(px(128,193)));
+  ck('128x196 real cover accepted',  fns.coverLooksReal(px(128,196)));
+  ck('128x229 real cover accepted',  fns.coverLooksReal(px(128,229)));
+  // The placeholder match must be exact, not a height band: a real jacket
+  // one pixel either side of a placeholder shape is still a real jacket.
+  ck('128x183 accepted (off by one)', fns.coverLooksReal(px(128,183)));
+  ck('128x185 accepted (off by one)', fns.coverLooksReal(px(128,185)));
+  ck('170 tall at another width accepted', fns.coverLooksReal(px(200,170)));
+  ck('tiny images still rejected', !fns.coverLooksReal(px(1,1)) && !fns.coverLooksReal(px(60,99)));
 
   // ---- buildAmazonLink --------------------------------------------------
   console.log('\nbuildAmazonLink');
