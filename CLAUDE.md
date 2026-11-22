@@ -475,17 +475,20 @@ node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 36 — tally, archiving, typed attendance, the venue
                           #      line's address test, end-to-end
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
-node tests/lookup.js     # 88 — Open Library parsing/failure modes, edition
+node tests/lookup.js     # 117 — Open Library parsing/failure modes, edition
                           #      filtering, ISBN conversion both ways, pulling
-                          #      an ISBN out of a pasted Amazon URL, and the
-                          #      Google volume-match guard + blurb cleaning
+                          #      an ISBN out of a pasted Amazon URL, telling
+                          #      apart the four kinds of link that carry no
+                          #      ISBN, and the Google volume-match guard +
+                          #      blurb cleaning
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
 ```
 
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
-`buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `parseAttendance`,
+`buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `classifyAmazonLink`,
+`parseAttendance`,
 `googleVolumeMatches`, `surnameMatches`, `cleanGoogleDescription`,
 `looksLikeAddress`, `mapLine`, or
 `suggestionWindowState`, run these. The regexes in the
@@ -568,6 +571,31 @@ rather than silently testing nothing.
 - **Amazon `/dp/` needs an ISBN-10.** A 13-digit ISBN 404s. The lookup picks a
   10 where available (direct or converted from a `978` ISBN-13) and falls
   back to an Amazon search otherwise.
+- **An `a.co` Share link cannot be resolved from the client, ever.** It 302s
+  to the real product page, but amazon.com sends no CORS headers, so the
+  browser will not expose the `Location` header or the body to page JS, and
+  `redirect:'manual'` yields an opaque response with no URL. This is not a
+  bug to work around in `index.html` — it needs a server to do the hop (a
+  Supabase edge function is the obvious home). Until then the suggestion
+  screen *names* the problem instead of failing silently. Note that Amazon's
+  mobile app Share button produces exactly this link, so it is the most
+  common thing a member will paste, not an edge case.
+- **Never gate a Submit button on the input parsing.** The link box's Submit
+  was `disabled` unless `parseAmazonISBN` succeeded, which meant the one
+  branch that explained a bad link was unreachable: you could not click the
+  button in the state it existed to describe. Reported from a real phone as
+  "nothing happens." A disabled control cannot teach anyone anything —
+  enable it and explain on submit. Three of the `supabase/*.sql` repair
+  files exist because members worked around this by pasting an `a.co` link
+  the organizer then fixed by hand.
+- **`.phone` is `overflow:hidden` and still scrolls.** The browser scrolls a
+  focused input into view by nudging its nearest scrollable ancestor, and
+  that offset survives an `innerHTML` swap — so a screen painted right after
+  someone tapped a field near the bottom of a form rendered ~48px down with
+  its header and back button clipped off, with no scrollbar to recover them.
+  `vp()` now zeroes it on every paint, which is why that function is not the
+  one-line getter it looks like it should be. Unrelated to the `.body`
+  scroll the shelf preserves on purpose.
 - **Cover lookups: always `cover_i`/edition cover ID, never ISBN.** ISBN-based
   cover requests are rate-limited to 100/5min per IP; cover-ID requests
   aren't. Fine for the one-time seed shelf (`SEED`'s `isbn/...` paths), but

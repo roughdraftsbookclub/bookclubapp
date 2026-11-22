@@ -939,6 +939,30 @@ function parseAmazonISBN(url){
   return sum % 11 === 0 ? raw : null;
 }
 
+/* WHY a pasted link yielded no book, so the member gets a specific answer
+   instead of a shrug. Pure and unit-tested (tests/lookup.js): this string is
+   the only thing standing between a member and a dead end, and sending them
+   to the wrong remedy is worse than saying nothing.
+
+   Returns one of: ok | empty | shortened | kindle | amazonother | notamazon.
+   Order matters — a link that parses is 'ok' whatever its host, and the
+   shortened check runs before the host check because a.co is not amazon.*  */
+function classifyAmazonLink(url){
+  const s = String(url || '').trim();
+  if (!s) return 'empty';
+  if (parseAmazonISBN(s)) return 'ok';
+  // Amazon's own shorteners. These 302 to the real page, but the redirect is
+  // unreadable from the browser (no CORS on amazon.com), so the client
+  // genuinely cannot follow it — see the note on memberBadLink.
+  if (/^(?:https?:\/\/)?(?:www\.)?(?:a\.co|amzn\.to|amzn\.eu|amzn\.asia)\//i.test(s))
+    return 'shortened';
+  if (!/^(?:https?:\/\/)?(?:[a-z0-9-]+\.)*amazon\.[a-z]{2,}(?:\.[a-z]{2,})?\//i.test(s))
+    return 'notamazon';
+  // B0-style ASIN: Kindle, audiobook, or anything that isn't a print book.
+  if (/\/(?:dp|gp\/product)\/B[0-9A-Z]{9}(?![0-9A-Z])/i.test(s)) return 'kindle';
+  return 'amazonother';
+}
+
 /* Amazon's /dp/ only resolves an ISBN-10 (it IS the ASIN for print books —
    Kindle editions carry their own, unrelated ASINs). Try direct, then a
    converted ISBN-13, then fall back to a real search URL — never a bare
@@ -1350,7 +1374,23 @@ const $  = (s,r=document) => r.querySelector(s);
 const $$ = (s,r=document) => [...r.querySelectorAll(s)];
 const esc = s => String(s).replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const vp = () => $('#viewport');
+/* Every screen paints through `vp().innerHTML = …` (23 call sites), so this
+   is the one chokepoint where a stale scroll offset can be cleared.
+
+   `.phone` is overflow:hidden and is never meant to scroll — but the browser
+   scrolls a focused input into view by nudging its nearest scrollable
+   ancestor, which is `.phone`, and that offset SURVIVES the innerHTML swap.
+   A member who tapped the link box (low on a tall form) and then tapped
+   Submit got the next screen rendered ~48px down, with its header and back
+   button clipped off the top and no scrollbar to bring them back. Reproduced
+   on the existing "No match found" screen, so it predates and outlives any
+   one view. The `.body` scroll that the shelf deliberately preserves to keep
+   the reader's place is a different element and is untouched here. */
+const vp = () => {
+  const ph = document.querySelector('.phone');
+  if (ph && ph.scrollTop) ph.scrollTop = 0;
+  return $('#viewport');
+};
 const plural = (n,s,p) => `${n} ${n===1?s:p}`;
 /** "1952 · 602 pages" — the pub year is always the work's original
     publication (bookFromRow's firstPublishYear), never a reprint edition's.
@@ -2302,8 +2342,10 @@ function memberNominate(){
         <label for="n-url">Paste a link <span class="opt">best way</span></label>
         <input class="control" id="n-url" type="url" inputmode="url" placeholder="Amazon link to the book" autocomplete="off">
         <div class="helpnote" style="margin-top:7px">
-          From Amazon's share button, or the address bar. Gets the right
-          cover, page count and edition first time.
+          Open the paperback or hardcover page on Amazon and copy the web
+          address. Gets the right cover, page count and edition first time.
+          A Share link (a.co/…) or a Kindle page doesn't carry the edition —
+          paste one anyway and we'll say so.
         </div>
       </div>
 
@@ -2331,8 +2373,15 @@ function memberNominate(){
     </div>`;
 
   const t = $('#n-t'), a = $('#n-a'), u = $('#n-url'), go = $('#n-go');
-  // Either route is enough on its own.
-  const check = () => go.disabled = !(t.value.trim() || parseAmazonISBN(u.value.trim()));
+  /* Either route is enough on its own. The link box only has to be NON-EMPTY
+     — deliberately not `parseAmazonISBN(...)`. Gating the button on a
+     successful parse left Submit greyed out for exactly the links members
+     actually paste (Amazon's Share button gives a.co/…, the app often lands
+     on the Kindle edition), with no way to find out why: the branch below
+     that explains it was unreachable, because the button couldn't be
+     clicked in the state it exists to describe. Whether a link carries a
+     book is decided on submit, where we can say what was wrong with it. */
+  const check = () => go.disabled = !(t.value.trim() || u.value.trim());
   t.oninput = () => { $('#f-t').classList.remove('invalid'); check(); };
   u.oninput = check;
   $('#n-close').onclick = () => goto('books');
@@ -2351,14 +2400,18 @@ function memberNominate(){
       if (hit && hit.found) return memberConfirmBook(hit, hit.title, hit.author, []);
       // Link parsed but nothing came back — fall through to the title if
       // they gave one, otherwise say so rather than silently doing nothing.
+      // `noRawAdd`: the only "title" we have here is the URL itself, and
+      // offering "Add without a cover" would put a book called
+      // "https://www.amazon.com/dp/…" on the shelf in one tap.
       if (!t.value.trim()){
-        return memberNoMatch(link, '', true);
+        return memberNoMatch('ISBN ' + isbn, '', true, true);
       }
     } else if (link && !t.value.trim()){
-      go.disabled = false;
-      go.innerHTML = 'Submit Suggestion';
-      toast("That link has no book in it — use the one from the book's own page");
-      return;
+      // A link that carries no print ISBN, and no title typed either. This
+      // branch used to be unreachable: Submit was gated on the link parsing,
+      // so the member just saw a dead button. It now lands on a screen that
+      // names what kind of link they pasted.
+      return memberBadLink(link);
     }
 
     if (!t.value.trim()){ go.disabled = false; go.innerHTML = 'Submit Suggestion'; $('#f-t').classList.add('invalid'); return; }
@@ -2373,7 +2426,71 @@ function memberNominate(){
 }
 
 /** Nothing came back, or the lookup couldn't run. Always the member's call. */
-function memberNoMatch(title, author, offline){
+/* A link that doesn't carry a print ISBN. Deliberately a screen and not a
+   toast: the 2.6s toast it replaced could not say which of four different
+   wrong-link shapes the member had, and CLAUDE.md's rule is that every
+   failure mode lands on a screen.
+
+   There is no "add it anyway" here on purpose — unlike every other failure
+   in this flow we have nothing to add. A URL is not a title.
+
+   On why the app can't just follow an a.co link itself: it 302s to the real
+   product page, but amazon.com sends no CORS headers, so the browser will
+   not expose the Location header or the body to page JS. `redirect:'manual'`
+   yields an opaque response with no URL. This is not a thing a client-side
+   app can work around — it needs a server to do the hop (see the edge
+   function note in CLAUDE.md). */
+function memberBadLink(link){
+  const kind = classifyAmazonLink(link);
+  const SAY = {
+    shortened: {
+      h: 'That\'s a Share link',
+      p: `Amazon's share button makes a short <b>a.co</b> link that hides which
+          edition it points at, and the app can't look behind it. Open the book
+          on Amazon, pick the paperback or hardcover, and copy the web address
+          from the top of the browser instead.`,
+    },
+    kindle: {
+      h: 'That\'s the Kindle edition',
+      p: `Kindle pages don't carry an ISBN, so there's no cover or page count to
+          fetch. On the book's Amazon page, tap <b>Paperback</b> or
+          <b>Hardcover</b> first, then copy that address.`,
+    },
+    amazonother: {
+      h: 'Not a book page',
+      p: `That's an Amazon link, but not a single book's page — it might be a
+          search, a list, or a store section. Open the book itself and copy the
+          address from there.`,
+    },
+    notamazon: {
+      h: 'Not an Amazon link',
+      p: `The link box reads Amazon book pages. That one isn't from Amazon, so
+          there's nothing to look up — but you can type the title below and
+          we'll search for it.`,
+    },
+  };
+  const s = SAY[kind] || SAY.amazonother;
+  vp().innerHTML = `${practiceBar()}${orgBar()}
+    <header class="appbar">
+      <button class="nav-btn" id="bl-back">${BACK}</button>
+      <h1>${s.h}</h1>
+    </header>
+    <div class="body pad-lg">
+      <div class="confirmwrap">
+        <div class="bigjacket none">No book<br>in that link</div>
+      </div>
+      <div class="helpnote" style="margin-top:14px">${s.p}</div>
+      <div style="height:8px"></div>
+    </div>
+    <div class="actionbar">
+      <button class="btn btn-primary" id="bl-retry">Try Another Link</button>
+      <button class="btn btn-ghost" id="bl-title">Type The Title Instead</button>
+    </div>`;
+  $('#bl-back').onclick = $('#bl-retry').onclick = () => goto('nominate');
+  $('#bl-title').onclick = () => { goto('nominate'); setTimeout(() => { const el = $('#n-t'); if (el) el.focus({ preventScroll: true }); }, 0); };
+}
+
+function memberNoMatch(title, author, offline, noRawAdd){
   vp().innerHTML = `${practiceBar()}${orgBar()}
     <header class="appbar">
       <button class="nav-btn" id="z-back">${BACK}</button>
@@ -2397,10 +2514,13 @@ function memberNoMatch(title, author, offline){
     </div>
     <div class="actionbar">
       <button class="btn btn-primary" id="z-retry">${offline ? 'Try Again' : 'Edit Search'}</button>
-      <button class="btn btn-ghost" id="z-raw">Add without a cover</button>
+      ${noRawAdd
+        ? `<button class="btn btn-ghost" id="z-title">Type The Title Instead</button>`
+        : `<button class="btn btn-ghost" id="z-raw">Add without a cover</button>`}
     </div>`;
   $('#z-back').onclick = $('#z-retry').onclick = () => goto('nominate');
-  $('#z-raw').onclick = () => commitSuggestion({ title, author });
+  if (noRawAdd) $('#z-title').onclick = () => { goto('nominate'); setTimeout(() => { const el = $('#n-t'); if (el) el.focus({ preventScroll: true }); }, 0); };
+  else $('#z-raw').onclick = () => commitSuggestion({ title, author });
 }
 
 /** Step two: the member confirms which book they meant. */

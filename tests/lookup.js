@@ -6,6 +6,7 @@ const code=[src.match(/const olCover = [^\n]*/)[0],
             src.match(/function isbn13to10\([\s\S]*?\r?\n\}/)[0],
             src.match(/function isbn10to13\([\s\S]*?\r?\n\}/)[0],
             src.match(/function parseAmazonISBN\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function classifyAmazonLink\([\s\S]*?\r?\n\}/)[0],
             src.match(/function buildAmazonLink\([\s\S]*?\r?\n\}/)[0],
             src.match(/const OL_HEADERS = [^\n]*/)[0],
             src.match(/async function lookupBook[\s\S]*?\r?\n\}(?=\r?\n)/)[0],
@@ -37,7 +38,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -106,6 +107,48 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
     fns.parseAmazonISBN('https://openlibrary.org/isbn/0141393394')===null);
   ck('empty returns null', fns.parseAmazonISBN('')===null);
   ck('null returns null', fns.parseAmazonISBN(null)===null);
+
+  // ---- classifyAmazonLink ---------------------------------------------------
+  // Decides WHICH explanation a member sees when a pasted link yields no book.
+  // Reported live: Submit stayed greyed out for a.co and Kindle links and the
+  // member got no reason at all, because the branch that explained it could
+  // not be reached. Sending someone to the wrong remedy is the failure mode
+  // these cover.
+  console.log('\nclassifyAmazonLink');
+  const cl = fns.classifyAmazonLink;
+  ck('a real print /dp/ link is ok',        cl('https://www.amazon.com/dp/0141393394')==='ok');
+  ck('/gp/product/ is ok',                  cl('https://www.amazon.com/gp/product/0385007515')==='ok');
+  ck('empty is empty',                      cl('')==='empty');
+  ck('whitespace only is empty',            cl('   ')==='empty');
+  ck('null is empty',                       cl(null)==='empty');
+  // The two shapes that actually caused the bug report.
+  ck('a.co share link -> shortened',        cl('https://a.co/d/9XpZ8qT')==='shortened');
+  ck('a.co without protocol -> shortened',  cl('a.co/d/9XpZ8qT')==='shortened');
+  ck('amzn.to -> shortened',                cl('https://amzn.to/3xYzAbc')==='shortened');
+  ck('amzn.eu -> shortened',                cl('https://amzn.eu/d/abc1234')==='shortened');
+  ck('Kindle B0 ASIN -> kindle',            cl('https://www.amazon.com/dp/B0CJKTNJLM')==='kindle');
+  ck('Kindle via /gp/product -> kindle',    cl('https://www.amazon.com/gp/product/B0CJKTNJLM')==='kindle');
+  ck('Kindle with slug and junk -> kindle',
+    cl('https://www.amazon.com/Shogun-Novel-James-Clavell/dp/B0CJKTNJLM/ref=sr_1_1?crid=X')==='kindle');
+  // Amazon, but not one book's page.
+  ck('amazon search page -> amazonother',   cl('https://www.amazon.com/s?k=shogun')==='amazonother');
+  ck('amazon home -> amazonother',          cl('https://www.amazon.com/')==='amazonother');
+  ck('amazon.co.uk book-ish -> amazonother',cl('https://www.amazon.co.uk/gp/bestsellers/books')==='amazonother');
+  ck('smile subdomain still amazon',        cl('https://smile.amazon.com/s?k=dune')==='amazonother');
+  // Not Amazon at all.
+  ck('goodreads -> notamazon',              cl('https://www.goodreads.com/book/show/4099.The_Godfather')==='notamazon');
+  ck('bare words -> notamazon',             cl('lonesome dove')==='notamazon');
+  // The trap: a lookalike host must not be read as Amazon.
+  ck('notamazon.com is NOT amazon',         cl('https://notamazon.com/dp/B0CJKTNJLM')==='notamazon');
+  ck('www.notamazon.com is NOT amazon',     cl('https://www.notamazon.com/x')==='notamazon');
+  ck('amazon in a path is NOT amazon',      cl('https://evil.test/amazon.com/dp/B0CJKTNJLM')==='notamazon');
+  // A 10-char ASIN that merely fails the checksum isn't Kindle — it's a
+  // mistyped ISBN on a real book page, so it must not claim "that's Kindle".
+  ck('bad-checksum ISBN is not called Kindle',
+    cl('https://www.amazon.com/dp/0141393395')==='amazonother');
+  // Ordering guard: a parseable ISBN wins even on a shortener host.
+  ck('shortener carrying a real ISBN is ok',
+    cl('https://amzn.to/dp/0141393394')==='ok');
 
   // ---- buildAmazonLink --------------------------------------------------
   console.log('\nbuildAmazonLink');
