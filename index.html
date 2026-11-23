@@ -2494,7 +2494,12 @@ function memberNominate(){
             got a link; it just isn't the better path any more. */''}
       <div class="field">
         <label for="n-url">Paste a link <span class="opt">best way</span></label>
-        <input class="control" id="n-url" type="url" inputmode="url" placeholder="Amazon link to the book" autocomplete="off">
+        ${/* Steers away from Kindle, which is still the one link shape that
+              genuinely cannot work: a B0 ASIN is not an ISBN, so there is no
+              edition to look up. Share (a.co) links DO work now, via the
+              amazon-book edge function, so the placeholder no longer warns
+              about those. */''}
+        <input class="control" id="n-url" type="url" inputmode="url" placeholder="Amazon paperback or hardcover link" autocomplete="off">
       </div>
 
       <div class="orline"><span>or type it</span></div>
