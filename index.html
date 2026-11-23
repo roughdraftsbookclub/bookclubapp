@@ -1900,6 +1900,51 @@ function slugVolumeMatches(v, slugWords){
   return titleWords.length > 0 && titleWords.every(w => words.has(w));       // (b)
 }
 
+/* Which of Open Library's two titles belongs on the shelf.
+
+   The WORK title is normally the one you want: an edition record carries the
+   printing's title, which may add a subtitle ("Frankenstein; or, The Modern
+   Prometheus") where the shelf just wants the book.
+
+   But OL's work record is held in whatever language it was catalogued in, and
+   for a translated novel that is the ORIGINAL — so the work title for an
+   English Solitude is "Cien años de soledad", and for Camus it is
+   "L'étranger". Caught live: a Kindle link rescued correctly, resolved to the
+   right English edition, and then offered the member a Spanish title to put
+   on an English book club's shelf.
+
+   The rule is SUBSET, not overlap. Whichever title's significant words are
+   contained in the other's is the plainer form, and that is the one to show:
+
+     work ⊆ edition   -> work      the edition merely bolts on a subtitle
+     edition ⊆ work   -> edition   the work wraps extra words around it
+     neither          -> edition   different titles; show what's on the book
+
+     "Frankenstein"          ⊆ "Frankenstein; or, The Modern…"  -> work
+     "Chesapeake"            ⊆ "Bahía de Chesapeake"            -> edition
+     "Cien años de soledad"  vs "One hundred years of solitude"  -> edition
+     "L'étranger"            vs "The Stranger"                   -> edition
+
+   Plain overlap was the first attempt and it is not enough: "Chesapeake"
+   appears in BOTH of Michener's titles, so any-word-in-common happily keeps
+   the Spanish one. A unit test caught that.
+
+   This deliberately does NOT try to detect language. OL's own `languages`
+   field is inconsistent enough that a real Italian East of Eden carries none
+   at all, so word structure is the honest signal. */
+function preferredTitle(workTitle, editionTitle){
+  const work = String(workTitle || '').trim();
+  const edition = String(editionTitle || '').trim();
+  if (!work) return edition;
+  if (!edition) return work;
+  const sig = t => normWords(t).split(' ').filter(w => w && !TITLE_STOPWORDS.has(w));
+  const w = sig(work), e = sig(edition);
+  if (!w.length || !e.length) return work;
+  if (w.every(x => e.includes(x))) return work;        // work ⊆ edition
+  if (e.every(x => w.includes(x))) return edition;     // edition ⊆ work
+  return edition;
+}
+
 /* A print ISBN-10 for a free-text query, via Google Books. Used to rescue a
    Kindle link from its slug. Prefers a real ISBN-10 (Amazon's /dp/ needs
    one) and converts a 978 ISBN-13 when that's all a volume carries. */
@@ -2106,10 +2151,7 @@ async function lookupByISBN(isbn10){
   out.olReachable = !!(search || edition);
 
   const doc = search && search.docs && search.docs[0];
-  // Title/author come from the work: an edition record can carry a subtitle
-  // ("Frankenstein; or, The Modern Prometheus") or a translated title, and
-  // the shelf wants the book, not the printing. Edition title is the fallback.
-  out.title  = (doc && doc.title) || (edition && edition.title) || '';
+  out.title  = preferredTitle(doc && doc.title, edition && edition.title);
   out.author = (doc && doc.author_name && doc.author_name[0]) || '';
   out.year   = doc && doc.first_publish_year ? String(doc.first_publish_year) : '';
   out.pages  = (edition && edition.number_of_pages)

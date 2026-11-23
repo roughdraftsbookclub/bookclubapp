@@ -496,7 +496,7 @@ node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 36 — tally, archiving, typed attendance, the venue
                           #      line's address test, end-to-end
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
-node tests/lookup.js     # 159 — Open Library parsing/failure modes, edition
+node tests/lookup.js     # 168 — Open Library parsing/failure modes, edition
                           #      filtering, ISBN conversion both ways, pulling
                           #      an ISBN out of a pasted Amazon URL, telling
                           #      apart the four kinds of link that carry no
@@ -509,7 +509,8 @@ node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
 `buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `classifyAmazonLink`,
-`amazonTitleSlug`, `slugVolumeMatches`, `amazonCover`, `googleImageURL`,
+`amazonTitleSlug`, `slugVolumeMatches`, `preferredTitle`, `amazonCover`,
+`googleImageURL`,
 `coverLooksReal`, `parseAttendance`,
 `googleVolumeMatches`, `surnameMatches`, `cleanGoogleDescription`,
 `looksLikeAddress`, `mapLine`, or
@@ -650,6 +651,24 @@ rather than silently testing nothing.
   carries the real 1,249-character publisher blurb. `googleLookup()` now
   keeps the longest among author-matching volumes; taking the first was
   leaving the good copy on the table.
+- **OL's work title is in the ORIGINAL language, and that is not what the
+  shelf wants.** The work record is catalogued in whatever language it was
+  created in, so for a translated novel the work title is foreign while the
+  English *edition* title is the one members recognise. Caught live: a Kindle
+  link was rescued correctly, resolved to the right English edition of
+  Solitude, and then offered "Cien años de soledad" to put on the shelf.
+  `preferredTitle()` decides by SUBSET, not overlap — whichever title's
+  significant words are contained in the other's is the plainer form and
+  wins; otherwise the edition title does. That keeps "Frankenstein" over
+  "Frankenstein; or, The Modern Prometheus" (the reason the work title was
+  preferred originally) while fixing Solitude, Camus and Michener.
+  Plain word-overlap was the first attempt and is NOT enough: "Chesapeake"
+  appears in both of Michener's titles, so any-word-in-common keeps the
+  Spanish one. A unit test caught it.
+  ⚠️ Still unfixed on the **title-search** path: `fetchEditionCandidates()`
+  filters editions by requiring the work title's words in the edition title,
+  so for Solitude it would reject every English edition. That path needs the
+  same treatment.
 - **Open Library's problem is accuracy, not coverage.** Tested against the
   books that arrived bare: it *finds* every one of them. What it returns is
   the trouble — the Camus work titled "L'étranger", the Michener titled

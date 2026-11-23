@@ -12,6 +12,7 @@ const code=[src.match(/const olCover = [^\n]*/)[0],
             src.match(/function amazonTitleSlug\([\s\S]*?\r?\n\}/)[0],
             src.match(/const TITLE_STOPWORDS = [^\n]*/)[0],
             src.match(/function slugVolumeMatches\([\s\S]*?\r?\n\}/)[0],
+            src.match(/function preferredTitle\([\s\S]*?\r?\n\}/)[0],
             src.match(/function googleImageURL\([\s\S]*?\r?\n\}/)[0],
             src.match(/const GOOGLE_PLACEHOLDER_DIMS = [^\n]*/)[0],
             src.match(/function coverLooksReal\([\s\S]*?\r?\n\}/)[0],
@@ -46,7 +47,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,amazonCover,amazonTitleSlug,slugVolumeMatches,googleImageURL,coverLooksReal,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,amazonCover,amazonTitleSlug,slugVolumeMatches,preferredTitle,googleImageURL,coverLooksReal,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -245,6 +246,30 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
   ck('a different book entirely is rejected',
     !svm({ title:'Light in August', authors:['William Faulkner'] }, fury));
   ck('no title and no author is rejected', !svm({}, solitude));
+
+  // ---- preferredTitle -------------------------------------------------------
+  // OL's work record is catalogued in the original language, so a translated
+  // novel's WORK title is foreign while the English EDITION title is the one
+  // members recognise. Caught live: a correctly-resolved English edition of
+  // Solitude offered "Cien años de soledad" to put on the shelf.
+  console.log('\npreferredTitle');
+  const pt = fns.preferredTitle;
+  ck('Spanish work title loses to the English edition',
+    pt('Cien años de soledad', 'One hundred years of solitude') === 'One hundred years of solitude');
+  ck("Camus: L'étranger loses to The Stranger",
+    pt("L'étranger", 'The Stranger') === 'The Stranger');
+  ck('Michener: Bahía de Chesapeake loses to Chesapeake',
+    pt('Bahía de Chesapeake', 'Chesapeake') === 'Chesapeake');
+  // The case the work-title preference existed for in the first place.
+  ck('work title kept over an edition subtitle',
+    pt('Frankenstein', 'Frankenstein; or, The Modern Prometheus') === 'Frankenstein');
+  ck('work title kept when titles agree',
+    pt('The Road', 'The Road') === 'The Road');
+  ck('stopword-only overlap is not a match',
+    pt('The Hobbit', 'The Silmarillion') === 'The Silmarillion');
+  ck('missing edition title falls back to work', pt('Dune', '') === 'Dune');
+  ck('missing work title falls back to edition', pt('', 'Dune') === 'Dune');
+  ck('both missing is empty', pt('', '') === '' && pt(null, null) === '');
 
   console.log('\namazonCover');
   // Amazon's ISBN-keyed image CDN. Measured 2026-11-23: 333x500 typical and
