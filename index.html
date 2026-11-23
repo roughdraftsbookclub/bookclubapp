@@ -1849,9 +1849,11 @@ function googleImageURL(imageLinks){
    without a description — so a volume carrying a real jacket but no blurb
    was discarded. The two are now collected independently, because Google
    frequently has one and not the other. */
-async function googleLookup(title, author){
-  if (!GOOGLE_BOOKS_KEY || !title) return { description: null, cover: null };
-  const q = [title, author].filter(Boolean).join(' ');
+/* One Google Books query, with the retry/deadline handling both callers need.
+   Returns an array of volumeInfo objects, or [] for "Google has nothing" and
+   for any failure — callers cannot tell those apart and do not need to. */
+async function googleVolumes(q){
+  if (!GOOGLE_BOOKS_KEY || !q) return [];
   const url = 'https://www.googleapis.com/books/v1/volumes?country=US&maxResults=10'
     + `&q=${encodeURIComponent(q)}&key=${encodeURIComponent(GOOGLE_BOOKS_KEY)}`;
 
@@ -1892,24 +1894,68 @@ async function googleLookup(title, author){
         await new Promise(res => setTimeout(res, 300 + attempt * 400));
         continue;
       }
-      if (!r.ok) return { description: null, cover: null };
+      if (!r.ok) return [];
       const data = await r.json();
-      let description = null, cover = null;
-      for (const item of (data.items || [])){
-        const v = item.volumeInfo || {};
-        if (!googleVolumeMatches(v, title, author)) continue;   // wrong book
-        if (!description && v.description)
-          description = cleanGoogleDescription(v.description, title);
-        if (!cover) cover = googleImageURL(v.imageLinks);
-        if (description && cover) break;
-      }
-      return { description, cover };    // a real answer, even if both null
+      return (data.items || []).map(it => it.volumeInfo || {});
     } catch (e){
       clearTimeout(timer);
       await new Promise(res => setTimeout(res, 300 + attempt * 400));
     }
   }
-  return { description: null, cover: null };
+  return [];
+}
+
+/* Description + cover for a book we ALREADY have a title for. The
+   googleVolumeMatches() guard is what keeps someone else's 1929 from being
+   described as ours: a wrong description ships to members as fact. */
+async function googleLookup(title, author){
+  if (!title) return { description: null, cover: null };
+  const vols = await googleVolumes([title, author].filter(Boolean).join(' '));
+  let description = null, cover = null;
+  for (const v of vols){
+    if (!googleVolumeMatches(v, title, author)) continue;       // wrong book
+    if (!description && v.description)
+      description = cleanGoogleDescription(v.description, title);
+    if (!cover) cover = googleImageURL(v.imageLinks);
+    if (description && cover) break;
+  }
+  return { description, cover };
+}
+
+/* Everything Google knows about one ISBN — the FALLBACK for when Open
+   Library has nothing, which is its documented failure mode (it goes down
+   for hours at a time, and that is the likeliest reason a book lands on the
+   shelf bare).
+
+   Google's ISBN index was measured DEAD on 2026-10-14 — totalItems 0 for
+   every ISBN tried, including known-good controls — and CLAUDE.md said so
+   in capitals. It is working again: re-measured 2026-11-22 against all 43
+   real shelf ISBNs, 40 resolved to the right book. The 3 that did not are
+   editions Google has no record of at all, not a broken query. Re-measure
+   before trusting this if it ever starts failing again; Google has rotted
+   this index once already.
+
+   No googleVolumeMatches() guard here, deliberately: an ISBN identifies one
+   edition, so there is no title to check a result against, and applying the
+   title guard would reject everything. The ISBN IS the match.
+
+   Takes title/author/description/cover ONLY. Page counts are the ebook's
+   (1252pp for the 928pp Karamazov) and dates are the printing's (The
+   Deerslayer dated 2021 against a true 1841). Those two fields stay with
+   Open Library and the organizer. */
+async function googleByISBN(isbn10, isbn13){
+  for (const isbn of [isbn10, isbn13].filter(Boolean)){
+    const vols = await googleVolumes(`isbn:${isbn}`);
+    const v = vols[0];
+    if (!v || !v.title) continue;
+    return {
+      title: v.title,
+      author: (v.authors && v.authors[0]) || '',
+      description: v.description ? cleanGoogleDescription(v.description, v.title) : null,
+      cover: googleImageURL(v.imageLinks),
+    };
+  }
+  return null;
 }
 
 /**
@@ -1946,6 +1992,12 @@ async function lookupByISBN(isbn10){
     grab(`https://openlibrary.org/isbn/${encodeURIComponent(isbn10)}.json`),
   ]);
 
+  // Did Open Library actually answer? Both calls returning null means it was
+  // unreachable (its documented failure mode), which is a different thing to
+  // tell the member than "no such book" — and until now they got the same
+  // "couldn't be reached" screen either way.
+  out.olReachable = !!(search || edition);
+
   const doc = search && search.docs && search.docs[0];
   // Title/author come from the work: an edition record can carry a subtitle
   // ("Frankenstein; or, The Modern Prometheus") or a translated title, and
@@ -1977,6 +2029,25 @@ async function lookupByISBN(isbn10){
   // image on the shelf presented as the book's own — 7 of 43 books on the
   // real shelf, two of them active. imageLinks is simply absent when there
   // is no jacket, so there is nothing to detect.
+  // Open Library gave us nothing usable — it was down, or it genuinely has
+  // no record. Ask Google by ISBN rather than dead-ending the member, which
+  // is exactly what happened to a real member on 2026-11-22: a valid link
+  // resolved to a valid ISBN and then showed "the book lookup couldn't be
+  // reached" with no way forward. Covers 40 of this shelf's 43 ISBNs.
+  if (!out.title){
+    const byIsbn = await googleByISBN(isbn10, out.isbn13);
+    if (byIsbn){
+      out.title       = byIsbn.title;
+      out.author      = out.author || byIsbn.author;
+      out.description = out.description || byIsbn.description;
+      if (byIsbn.cover && !out.cover) out.cover = byIsbn.cover;
+      // Year and page count stay empty on purpose: Google's are the
+      // printing's and the ebook's. Better blank for the organizer to fill
+      // than a plausible wrong number written in as fact.
+      out.fromGoogle = true;
+    }
+  }
+
   const g = (out.title) ? await googleLookup(out.title, out.author)
                         : { description: null, cover: null };
   if (!out.description) out.description = g.description;
@@ -2507,7 +2578,10 @@ function memberNominate(){
       // offering "Add without a cover" would put a book called
       // "https://www.amazon.com/dp/…" on the shelf in one tap.
       if (!t.value.trim()){
-        return memberNoMatch('ISBN ' + isbn, '', true, true);
+        // `offline` only when the lookup genuinely couldn't be reached.
+        // Claiming "patchy connection" for a book nobody has on file sends
+        // the member off to retry something that will never succeed.
+        return memberNoMatch('ISBN ' + isbn, '', !(hit && hit.olReachable), true);
       }
     } else if (link && !t.value.trim()){
       // A link that carries no print ISBN, and no title typed either. This

@@ -537,15 +537,23 @@ rather than silently testing nothing.
   parameter list). PostgREST matches an overload by the exact set of named
   arguments. Check the signature in `schema.sql`/`patch_*.sql` before
   concluding anything is missing.
-- **Google Books ISBN lookup does not work, with or without a key.** This is
-  the single most expensive thing to rediscover here. `q=isbn:<isbn>` returns
-  `totalItems: 0` for *every* ISBN — 10- and 13-digit, with and without
+- **Google Books ISBN lookup was dead, and is working again. Re-measure
+  before trusting it.** On **2026-10-14** `q=isbn:<isbn>` returned
+  `totalItems: 0` for *every* ISBN tried — 10- and 13-digit, with and without
   `country=US`, quoted, uppercased, plus-encoded, bare — including known-good
-  controls, while a plain title search for the same book returns hundreds of
-  hits. Google's ISBN index is rotted, not rate-limited. Scanning a title
-  search for our own ISBN to recover the edition matched 1 case in 5.
-  Measured live 2026-10-14 against the real shelf.
-- **So Google supplies descriptions and nothing else.** Its page counts are
+  controls, while a plain title search for the same book returned hundreds of
+  hits. The index was rotted, not rate-limited.
+  **Re-measured 2026-11-22 against all 43 real shelf ISBNs: 40 resolved to
+  the correct book.** The 3 that didn't are editions Google has no record of
+  at all (the same three whose covers come back as the PNG placeholder), not
+  a broken query. So it recovered somewhere between those dates.
+  `googleByISBN()` now uses it, but **only as a fallback** when Open Library
+  gives nothing — OL stays primary because its work-level title and
+  *original* publication year are what the shelf wants, where Google gives
+  the printing's. This index has rotted once; if lookups start failing,
+  measure across the shelf before assuming anything else is wrong.
+- **Google supplies descriptions, covers, and a title/author fallback by
+  ISBN — never page counts or dates.** Its page counts are
   the *ebook's* (1252pp for the 928pp Karamazov, 769pp for the 464pp Rush)
   and its dates are the *printing's*, which is catastrophic on a classic —
   it dates The Deerslayer to 2021 against a true 1841. Those two fields stay
