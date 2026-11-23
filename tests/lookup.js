@@ -7,6 +7,7 @@ const code=[src.match(/const olCover = [^\n]*/)[0],
             src.match(/function isbn10to13\([\s\S]*?\r?\n\}/)[0],
             src.match(/function parseAmazonISBN\([\s\S]*?\r?\n\}/)[0],
             src.match(/function classifyAmazonLink\([\s\S]*?\r?\n\}/)[0],
+            src.match(/const amazonCover = [\s\S]*?;\r?\n/)[0],
             src.match(/function googleImageURL\([\s\S]*?\r?\n\}/)[0],
             src.match(/const GOOGLE_PLACEHOLDER_DIMS = [^\n]*/)[0],
             src.match(/function coverLooksReal\([\s\S]*?\r?\n\}/)[0],
@@ -41,7 +42,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,googleImageURL,coverLooksReal,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,amazonCover,googleImageURL,coverLooksReal,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -183,6 +184,20 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
   ck('does NOT rewrite the zoom parameter',
     gi({thumbnail:'https://books.google.com/books/content?id=A&img=1&zoom=1&source=gbs_api'})
       ==='https://books.google.com/books/content?id=A&img=1&zoom=1&source=gbs_api');
+
+  console.log('\namazonCover');
+  // Amazon's ISBN-keyed image CDN. Measured 2026-11-23: 333x500 typical and
+  // usable for 42 of 44 shelf ISBNs, against Google's 128x192 and 36 of 43.
+  // When Amazon has no image it serves a 43-byte 1x1 GIF, which
+  // coverLooksReal() rejects on size — no placeholder-shape matching needed.
+  ck('builds the ISBN-keyed CDN path',
+    fns.amazonCover('006112009X')
+      === 'https://images-na.ssl-images-amazon.com/images/P/006112009X.01.LZZZZZZZ.jpg');
+  ck('an X check digit is kept verbatim',
+    fns.amazonCover('034553980X').includes('/P/034553980X.01.'));
+  ck('always https', fns.amazonCover('0141393394').startsWith('https://'));
+  ck('a 1x1 blank is not a real cover',
+    !fns.coverLooksReal({ naturalWidth:1, naturalHeight:1 }));
 
   console.log('\ncoverLooksReal');
   const px = (w,h) => ({ naturalWidth:w, naturalHeight:h });

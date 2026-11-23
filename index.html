@@ -1817,6 +1817,27 @@ function cleanGoogleDescription(raw, title){
 /** A description for a book Open Library had none for, or null. Never throws
     and never blocks: every caller treats it as a bonus. Searches by title and
     author because ISBN search returns nothing — see the note above. */
+/* Amazon's cover for an ISBN-10. A plain image URL on their CDN — no API, no
+   key, no page parsing, and CORS is irrelevant because it loads in an <img>.
+   This is the same ISBN-keyed image path affiliate sites have embedded for
+   years, and it is the best jacket source available to this app:
+
+     measured 2026-11-23 across all 44 shelf ISBNs
+       Amazon      333x500 typical   42 of 44 usable   (95%)
+       Google API  128x192 typical   36 of 43 real     (84%)
+
+   That is roughly 4x the pixels, and the failure case is cleaner too: when
+   Amazon has no image it returns a 43-byte 1x1 GIF, which coverLooksReal()
+   already rejects on its minimum-size test — no placeholder-shape matching
+   needed, unlike Google's two variants.
+
+   Caveats worth keeping in mind: the endpoint is undocumented, so it could
+   change without notice, and it only answers for ISBN-10s. Both are why it
+   is the FIRST choice in a chain and never the only one — see lookupByISBN,
+   where Google and then Open Library stand behind it. */
+const amazonCover = isbn10 =>
+  `https://images-na.ssl-images-amazon.com/images/P/${isbn10}.01.LZZZZZZZ.jpg`;
+
 /* Turn a volumeInfo.imageLinks block into a usable jacket URL, or null.
 
    The point of going through the API for covers: imageLinks is ABSENT when
@@ -1914,10 +1935,18 @@ async function googleLookup(title, author){
   let description = null, cover = null;
   for (const v of vols){
     if (!googleVolumeMatches(v, title, author)) continue;       // wrong book
-    if (!description && v.description)
-      description = cleanGoogleDescription(v.description, title);
+    if (v.description){
+      const d = cleanGoogleDescription(v.description, title);
+      // LONGEST wins, not first. Google lists several editions of the same
+      // book and their blurbs differ wildly in quality: for One Hundred
+      // Years of Solitude the first author-matching volume carries 534
+      // characters and a later one carries the real 1,249-character
+      // publisher blurb, while the ISBN-keyed record has a 137-character
+      // library stub. Taking the first was leaving the good copy on the
+      // table. Measured 2026-11-23.
+      if (d && (!description || d.length > description.length)) description = d;
+    }
     if (!cover) cover = googleImageURL(v.imageLinks);
-    if (description && cover) break;
   }
   return { description, cover };
 }
@@ -2052,9 +2081,21 @@ async function lookupByISBN(isbn10){
                         : { description: null, cover: null };
   if (!out.description) out.description = g.description;
 
-  // Open Library's jacket stays as the fallback the confirm form swaps to.
-  out.olCoverFallback = out.cover || '';
-  if (g.cover) out.cover = g.cover;
+  /* Jacket, best first, with everything behind it kept as a fallback the
+     confirm screen swaps to if what loads turns out to be a blank.
+
+       1. Amazon   — 333x500, 95% of this shelf. Best picture by a distance.
+       2. Google   — 128x192, from the API's imageLinks, so only present
+                     when a real jacket exists.
+       3. Open Library — whatever the edition record had.
+
+     Amazon is an undocumented endpoint and answers only to ISBN-10s, which
+     is exactly why it is first in a CHAIN and not the only source. When it
+     has nothing it returns a 43-byte 1x1 GIF; coverLooksReal() rejects that
+     on size and the form falls through to the next one down. */
+  const olCover_ = out.cover || '';
+  out.cover = (isbn10 ? amazonCover(isbn10) : '') || g.cover || olCover_;
+  out.olCoverFallback = g.cover || olCover_;   // next best, for the swap
 
   out.found = !!(out.title);
   return out;
@@ -2918,14 +2959,40 @@ function memberConfirmBook(h, rawTitle, rawAuthor, hits){
   // Google's cover is offered first because it's reliably the English
   // jacket, but it answers 200 with a small placeholder when it has none.
   // If what loaded is placeholder-sized, quietly swap to Open Library's.
+  /* Walk the jacket chain until something real loads, and remember WHICH one
+     did — because that is what gets written to the book record.
+
+     "It loaded" is not "there is a cover": Amazon answers 200 with a 43-byte
+     1x1 GIF for an ISBN it has no image for. Without this the 1x1 would both
+     stretch across the slot and be saved as the book's cover_url forever.
+     Two of the 44 shelf ISBNs are in exactly that state.
+
+     Chain: h.cover (Amazon) -> h.olCoverFallback (Google, else Open Library)
+     -> the drawn "No cover found" placeholder. The `load` listener is NOT
+     once-only: after a src swap it has to judge the replacement too. */
+  let resolvedCover = h.cover || '';
   const jacket = vp().querySelector('.bigjacket');
-  if (jacket && jacket.tagName === 'IMG' && h.olCoverFallback){
-    const swap = () => { if (!coverLooksReal(jacket)) jacket.src = h.olCoverFallback.replace(/-M\.jpg$/, '-L.jpg'); };
-    jacket.complete ? swap() : jacket.addEventListener('load', swap, { once:true });
-    jacket.addEventListener('error', () => { jacket.src = h.olCoverFallback.replace(/-M\.jpg$/, '-L.jpg'); }, { once:true });
+  if (jacket && jacket.tagName === 'IMG'){
+    const nextUp = (h.olCoverFallback || '').replace(/-M\.jpg$/, '-L.jpg');
+    let triedFallback = false;
+    const giveUp = () => {
+      resolvedCover = '';
+      const ph = document.createElement('div');
+      ph.className = 'bigjacket none';
+      ph.innerHTML = 'No cover found';
+      jacket.replaceWith(ph);
+    };
+    const fallOver = () => {
+      if (!triedFallback && nextUp){
+        triedFallback = true; resolvedCover = nextUp; jacket.src = nextUp;
+      } else giveUp();
+    };
+    jacket.addEventListener('load', () => { if (!coverLooksReal(jacket)) fallOver(); });
+    jacket.addEventListener('error', fallOver);
+    if (jacket.complete) { if (!coverLooksReal(jacket)) fallOver(); }
   }
   $('#k-go').onclick = () => commitSuggestion({
-    title: h.title, author: h.author, cover: h.cover, isbn: h.isbn, isbn13: h.isbn13,
+    title: h.title, author: h.author, cover: resolvedCover, isbn: h.isbn, isbn13: h.isbn13,
     buy, description: h.description, pages: h.pages, year: h.year,
   });
 }

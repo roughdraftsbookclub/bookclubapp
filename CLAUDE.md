@@ -587,12 +587,46 @@ rather than silently testing nothing.
   organizer's URL carries `?organizer`, which shouldn't be handed to Google
   in a header. **Verify any change to this on the deployed site, not
   locally** — localhost cannot reproduce it in either direction.
-- **Covers are a separate, keyless endpoint and still resolve by ISBN.**
-  `books.google.com/books/content?vid=ISBN<isbn>` is a plain image URL — no
-  API call, no key — verified against five real shelf ISBNs, and reliably the
-  *English* jacket where OL often isn't. When Google has no cover it answers
-  200 with a ~1.2KB PNG placeholder rather than 404ing, which is what
-  `coverLooksReal()` catches before falling back to OL's cover.
+- **Covers come from Amazon first, and it is not close.** `amazonCover()`
+  builds `images-na.ssl-images-amazon.com/images/P/<isbn10>.01.LZZZZZZZ.jpg`
+  — a plain image URL on their CDN, no API, no key, no page parsing, and CORS
+  is irrelevant because it loads in an `<img>`. Measured 2026-11-23 across all
+  44 shelf ISBNs:
+
+  | source | typical size | usable |
+  |---|---|---|
+  | Amazon | **333×500** | **42 of 44 (95%)** |
+  | Google API `imageLinks` | 128×192 | 36 of 43 (84%) |
+
+  Roughly 4× the pixels, and the failure case is cleaner: when Amazon has no
+  image for an ISBN it returns a **43-byte 1×1 GIF**, which
+  `coverLooksReal()` rejects on its plain minimum-size test — no
+  placeholder-shape matching needed, unlike Google's two variants.
+  The chain in `lookupByISBN` is **Amazon → Google → Open Library**, and
+  `memberConfirmBook` walks it on load, ending at the drawn "No cover found"
+  placeholder. Two things to keep:
+  - the endpoint is **undocumented** and answers only ISBN-10s, which is
+    exactly why it is first in a chain and never the only source;
+  - **"it loaded" is not "there is a cover."** The confirm screen records
+    which URL actually survived (`resolvedCover`) and commits that, not
+    `h.cover`. Without it the 1×1 blank both stretches across the jacket slot
+    and gets written to the record as the book's `cover_url` for good.
+- **Amazon's *descriptions* are not reachable, and that is not worth
+  fighting.** The product page sends no CORS headers, returns 503 to a
+  non-browser `User-Agent` (measured), and parsing it would be against their
+  terms. The sanctioned route is the Product Advertising API, which needs an
+  Associates account with qualifying sales. Covers are a different thing —
+  a plain image hotlink, not page scraping. For blurbs, Google is usually
+  carrying the *same publisher copy*: for ISBN 0679732241 (The Sound and the
+  Fury) Google's 1,177-character description is character-for-character the
+  Amazon blurb, because publishers feed both from the same ONIX data.
+- **Take the LONGEST Google description, not the first.** Google lists
+  several editions of a book and their blurbs differ wildly. For One Hundred
+  Years of Solitude the ISBN-keyed record carries a 137-character library
+  stub, the first author-matching title result carries 534, and a later one
+  carries the real 1,249-character publisher blurb. `googleLookup()` now
+  keeps the longest among author-matching volumes; taking the first was
+  leaving the good copy on the table.
 - **Open Library's problem is accuracy, not coverage.** Tested against the
   books that arrived bare: it *finds* every one of them. What it returns is
   the trouble — the Camus work titled "L'étranger", the Michener titled
