@@ -25,21 +25,22 @@
 --     never read from OL's edition record, which lists wrong counterparts.
 --   * Amazon links follow buildAmazonLink()'s rule (ASIN = ISBN-10 for
 --     print) and both return HTTP 200 on a real browser User-Agent.
---   * Covers come from the Google Books API's imageLinks, which is absent
---     unless a real jacket exists — checked, and both are real images
---     (128x192 and 128x197). Not the keyless vid=ISBN URL, which answers
---     200 with a placeholder when Google has nothing.
+--   * Covers come from Amazon's ISBN-keyed image CDN — 333x500 and 324x500,
+--     both fetched and confirmed as real jackets. That is ~4x the pixels of
+--     the Google API's 128px thumbnails, and is what the app itself now
+--     reaches for first (see amazonCover() in index.html). A missing image
+--     there is a 43-byte 1x1 GIF, so a real size proves a real cover.
 --   * first_publish_year is the WORK's original publication, not this
 --     printing's: 1967 and 1929. Both confirmed from OL's work record.
 --   * page_count is Open Library's EDITION figure. Google's are the ebook's
---     (448 and 385 against true 417 and 321) and are deliberately not used.
+--     (448 and 385 against true 417 and 326) and are deliberately not used.
 --
--- ⚠️ ONE FIGURE TO SANITY-CHECK: The Sound and the Fury's 321 pages. Open
--- Library's record for ISBN 0679732241 also claims publisher "Penguin" and
--- date "2025", both plainly wrong for a Vintage International edition, so
--- its page count for that row carries less weight than usual. 321 is the
--- only per-edition number on file. Correct it in the edit form if Amazon
--- disagrees; it is the sort of thing that is better right than confident.
+-- Note on The Sound and the Fury's page count: an earlier draft of this file
+-- said 321, read from OL's /api/books aggregate, which also claimed
+-- "Penguin" and "2025" for this ISBN. The /isbn/.json EDITION record — the
+-- endpoint lookupByISBN actually uses — says Vintage Books, 1990, 326 pages,
+-- and 326 is what the live app displays for this link. 326 it is. Worth
+-- remembering that OL's two endpoints disagree about the same ISBN.
 --
 -- Run the whole file. Safe to re-run.
 
@@ -51,8 +52,8 @@ update books set
   author             = 'Gabriel García Márquez',
   isbn               = '006112009X',
   isbn13             = '9780061120091',
-  cover_url          = 'https://books.google.com/books/content?id=CeQNngEACAAJ&printsec=frontcover&img=1&zoom=1&source=gbs_api',
-  cover_large        = 'https://books.google.com/books/content?id=CeQNngEACAAJ&printsec=frontcover&img=1&zoom=1&source=gbs_api',
+  cover_url          = 'https://images-na.ssl-images-amazon.com/images/P/006112009X.01.LZZZZZZZ.jpg',
+  cover_large        = 'https://images-na.ssl-images-amazon.com/images/P/006112009X.01.LZZZZZZZ.jpg',
   amazon             = 'https://www.amazon.com/dp/006112009X',
   page_count         = 417,
   first_publish_year = 1967,
@@ -73,10 +74,10 @@ update books set
   author             = 'William Faulkner',
   isbn               = '0679732241',
   isbn13             = '9780679732242',
-  cover_url          = 'https://books.google.com/books/content?id=_luMDQAAQBAJ&printsec=frontcover&img=1&zoom=1&source=gbs_api',
-  cover_large        = 'https://books.google.com/books/content?id=_luMDQAAQBAJ&printsec=frontcover&img=1&zoom=1&source=gbs_api',
+  cover_url          = 'https://images-na.ssl-images-amazon.com/images/P/0679732241.01.LZZZZZZZ.jpg',
+  cover_large        = 'https://images-na.ssl-images-amazon.com/images/P/0679732241.01.LZZZZZZZ.jpg',
   amazon             = 'https://www.amazon.com/dp/0679732241',
-  page_count         = 321,
+  page_count         = 326,
   first_publish_year = 1929,
   needs_review       = false,
   description        = 'NOBEL PRIZE WINNER • One of the greatest novels of the twentieth century is the story of a family of Southern aristocrats on the brink of personal and financial ruin. • The definitive corrected text, including Faulkner''s Appendix
