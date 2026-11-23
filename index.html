@@ -1838,6 +1838,84 @@ function cleanGoogleDescription(raw, title){
 const amazonCover = isbn10 =>
   `https://images-na.ssl-images-amazon.com/images/P/${isbn10}.01.LZZZZZZZ.jpg`;
 
+/* The human-readable slug Amazon puts in a product URL, as search words.
+
+     /Hundred-Solitude-Gabriel-Garc%C3%ADa-M%C3%A1rquez-ebook/dp/B0BFK4THKQ
+       -> "Hundred Solitude Gabriel García Márquez"
+
+   This is the only thing in a Kindle URL worth anything: the ASIN is an
+   Amazon-internal id with no mapping to an ISBN, but the slug carries the
+   title and usually the author. Lets a Kindle paste be turned into the print
+   edition instead of bounced — the single most common wrong paste, because
+   Amazon's own search results put the Kindle edition first.
+
+   Returns '' when there is no slug: a bare /dp/<asin> URL has none, and the
+   host must NOT be mistaken for one (an early version happily returned
+   "www.amazon.com"). Format words are dropped so they don't skew the search. */
+const SLUG_NOISE = new Set(['ebook','kindle','edition','paperback','hardcover',
+  'audiobook','audible','book','novel','unabridged','abridged','reprint']);
+
+function amazonTitleSlug(url){
+  let path;
+  try { path = new URL(/^https?:\/\//i.test(url) ? url : 'https://' + String(url || '')).pathname; }
+  catch { return ''; }
+  const parts = path.split('/').filter(Boolean);
+  const at = parts.findIndex((p, i) =>
+    p === 'dp' || (p === 'product' && parts[i - 1] === 'gp'));
+  // `at < 1` covers both "no /dp/ at all" and "/dp/ is the first segment",
+  // i.e. nothing precedes it to read a slug from.
+  if (at < 1) return '';
+  const slug = parts[at - 1];
+  if (slug === 'gp') return '';                 // /gp/product/<asin>, no slug
+  let decoded = slug;
+  try { decoded = decodeURIComponent(slug); } catch { /* keep it raw */ }
+  return decoded.split('-')
+    .filter(w => w && !SLUG_NOISE.has(w.toLowerCase()))
+    .join(' ')
+    .trim();
+}
+
+/* Does this Google volume plausibly BE the book the slug names, as opposed to
+   a study guide about it? This guard is the whole difficulty: Gale's
+   "A Study Guide for Gabriel Garcia Marquez's One Hundred Years of Solitude"
+   repeats both the title AND the author, so title overlap alone picks it.
+
+   Accept on either of two independent signals:
+     (a) one of the volume's AUTHORS appears in the slug — the real book is by
+         García Márquez, the companions are by Gale, Bright Summaries and
+         Harold Bloom, so the author field separates them cleanly; or
+     (b) every significant word of the volume's TITLE appears in the slug —
+         which holds for a slug that is title-only ("Sound-Fury-Corrected-
+         Text" vs "The Sound and the Fury") and fails for a companion, whose
+         title adds words like "study", "guide" or the publisher's name.
+   Same principle as fetchEditionCandidates' title filter. */
+const TITLE_STOPWORDS = new Set(['the','a','an','of','and','or','in','on','to','for','by','at','with']);
+
+function slugVolumeMatches(v, slugWords){
+  const words = new Set(slugWords);
+  const authorWords = (v.authors || []).flatMap(a => normWords(a).split(' ')).filter(Boolean);
+  if (authorWords.some(w => w.length > 2 && words.has(w))) return true;      // (a)
+  const titleWords = normWords(v.title || '').split(' ')
+    .filter(w => w && !TITLE_STOPWORDS.has(w));
+  return titleWords.length > 0 && titleWords.every(w => words.has(w));       // (b)
+}
+
+/* A print ISBN-10 for a free-text query, via Google Books. Used to rescue a
+   Kindle link from its slug. Prefers a real ISBN-10 (Amazon's /dp/ needs
+   one) and converts a 978 ISBN-13 when that's all a volume carries. */
+async function googlePrintISBN(query){
+  if (!query) return null;
+  const slugWords = normWords(query).split(' ').filter(Boolean);
+  for (const v of await googleVolumes(query)){
+    if (!slugVolumeMatches(v, slugWords)) continue;
+    const ids = v.industryIdentifiers || [];
+    const pick = t => (ids.find(x => x.type === t) || {}).identifier || '';
+    const isbn = pick('ISBN_10') || isbn13to10(pick('ISBN_13'));
+    if (isbn) return isbn;
+  }
+  return null;
+}
+
 /* Turn a volumeInfo.imageLinks block into a usable jacket URL, or null.
 
    The point of going through the API for covers: imageLinks is ABSENT when
@@ -2640,6 +2718,25 @@ function memberNominate(){
       // the amazon-book edge function can. Every failure falls through to
       // the same screen as before, so a function that isn't deployed, is
       // down, or is slow costs the member nothing but the spinner.
+      // A Kindle link carries no ISBN — the B0 ASIN is Amazon-internal — but
+      // its URL slug usually carries the title and author. Recover the print
+      // edition from that rather than sending the member back to Amazon to
+      // find the paperback themselves. Amazon's own search results put the
+      // Kindle edition first, so this is the common case, not an edge one.
+      if (classifyAmazonLink(link) === 'kindle'){
+        const slug = amazonTitleSlug(link);
+        if (slug){
+          go.innerHTML = '<span class="spin"></span>Finding the print edition…';
+          const isbn10 = await googlePrintISBN(slug);
+          if (isbn10){
+            const hit = await lookupByISBN(isbn10);
+            if (hit && hit.found) return memberConfirmBook(hit, hit.title, hit.author, []);
+          }
+        }
+        // No slug, or nothing convincing behind it: the Kindle screen still
+        // tells them exactly what to do, same as before.
+        return memberBadLink(link, 'kindle');
+      }
       if (classifyAmazonLink(link) === 'shortened'){
         go.innerHTML = '<span class="spin"></span>Opening the link…';
         const r = await resolveShortLink(link);

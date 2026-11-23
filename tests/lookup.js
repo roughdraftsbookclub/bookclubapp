@@ -8,6 +8,10 @@ const code=[src.match(/const olCover = [^\n]*/)[0],
             src.match(/function parseAmazonISBN\([\s\S]*?\r?\n\}/)[0],
             src.match(/function classifyAmazonLink\([\s\S]*?\r?\n\}/)[0],
             src.match(/const amazonCover = [\s\S]*?;\r?\n/)[0],
+            src.match(/const SLUG_NOISE = [\s\S]*?;\r?\n/)[0],
+            src.match(/function amazonTitleSlug\([\s\S]*?\r?\n\}/)[0],
+            src.match(/const TITLE_STOPWORDS = [^\n]*/)[0],
+            src.match(/function slugVolumeMatches\([\s\S]*?\r?\n\}/)[0],
             src.match(/function googleImageURL\([\s\S]*?\r?\n\}/)[0],
             src.match(/const GOOGLE_PLACEHOLDER_DIMS = [^\n]*/)[0],
             src.match(/function coverLooksReal\([\s\S]*?\r?\n\}/)[0],
@@ -42,7 +46,7 @@ global.fetch=async()=>{
     {title:null,cover_i:1}
   ]})};
 };
-const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,amazonCover,googleImageURL,coverLooksReal,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
+const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWorkDescription,isbn13to10,isbn10to13,parseAmazonISBN,classifyAmazonLink,amazonCover,amazonTitleSlug,slugVolumeMatches,googleImageURL,coverLooksReal,buildAmazonLink,normWords,surnameMatches,googleVolumeMatches,cleanGoogleDescription};')();
 (async()=>{
   let r=await fns.lookupBook('the wager','grann');
   r.forEach(h=>console.log('   ',h.title,'|',h.author,'|',h.year,'|',h.pages,'pp |',h.isbn||'(no isbn10)','|',h.buy.slice(0,46)));
@@ -184,6 +188,63 @@ const fns=new Function(code+'\nreturn {lookupBook,fetchEditionCandidates,fetchWo
   ck('does NOT rewrite the zoom parameter',
     gi({thumbnail:'https://books.google.com/books/content?id=A&img=1&zoom=1&source=gbs_api'})
       ==='https://books.google.com/books/content?id=A&img=1&zoom=1&source=gbs_api');
+
+  // ---- amazonTitleSlug ------------------------------------------------------
+  // The only usable thing in a Kindle URL: the ASIN is Amazon-internal, the
+  // slug carries the title and usually the author.
+  console.log('\namazonTitleSlug');
+  const slug = fns.amazonTitleSlug;
+  ck('pulls the slug and drops "ebook"',
+    slug('https://www.amazon.com/Hundred-Solitude-Gabriel-Garc%C3%ADa-M%C3%A1rquez-ebook/dp/B0BFK4THKQ/ref=sr_1_3')
+      === 'Hundred Solitude Gabriel García Márquez');
+  ck('percent-encoding is decoded',
+    slug('https://www.amazon.com/Garc%C3%ADa-M%C3%A1rquez/dp/B0X1234567').includes('García'));
+  ck('works on a print /dp/ too',
+    slug('https://www.amazon.com/Sound-Fury-Corrected-Text/dp/0679732241/ref=tmm_pap_swatch_0')
+      === 'Sound Fury Corrected Text');
+  // The trap: with no slug segment the HOST must not be returned.
+  ck('bare /dp/ has no slug',        slug('https://www.amazon.com/dp/B0BFK4THKQ') === '');
+  ck('bare /dp/ no protocol',        slug('www.amazon.com/dp/B0BFK4THKQ') === '');
+  ck('/gp/product/ has no slug',     slug('https://www.amazon.com/gp/product/0385007515') === '');
+  ck('non-Amazon URL yields nothing useful',
+    slug('https://example.com/dp/0141393394') === '' || !slug('https://example.com/dp/0141393394').includes('example'));
+  ck('garbage is empty',             slug('not a url') === '');
+  ck('empty/null are empty',         slug('') === '' && slug(null) === '');
+  ck('kindle/paperback noise words dropped',
+    slug('https://www.amazon.com/Dune-paperback-novel-Frank-Herbert-kindle/dp/B0X1234567')
+      === 'Dune Frank Herbert');
+
+  // ---- slugVolumeMatches ----------------------------------------------------
+  // A study guide's TITLE repeats the book title AND the author, so title
+  // overlap alone picks Gale. This guard is what keeps a companion volume's
+  // ISBN from being shipped to the club as the book itself.
+  console.log('\nslugVolumeMatches');
+  const words = s => fns.normWords(s).split(' ').filter(Boolean);
+  const solitude = words('Hundred Solitude Gabriel García Márquez');
+  const svm = fns.slugVolumeMatches;
+  ck('the real book matches on its author',
+    svm({ title:'One Hundred Years of Solitude', authors:['Gabriel García Márquez'] }, solitude));
+  ck('accent-folded author still matches',
+    svm({ title:'One Hundred Years of Solitude', authors:['Gabriel Garcia Marquez'] }, solitude));
+  ck('Gale study guide REJECTED',
+    !svm({ title:"A Study Guide for Gabriel Garcia Marquez's One Hundred Years of Solitude",
+           authors:['Gale, Cengage Learning'] }, solitude));
+  ck('Bright Summaries REJECTED',
+    !svm({ title:'One Hundred Years of Solitude by Gabriel García Márquez (Book Analysis)',
+           authors:['Bright Summaries'] }, solitude));
+  ck('Harold Bloom companion REJECTED',
+    !svm({ title:'One Hundred Years of Solitude - Gabriel Garcia Marquez',
+           authors:['Harold Bloom'] }, solitude));
+  // Signal (b): a title-only slug, where there is no author to match on.
+  const fury = words('Sound Fury Corrected Text');
+  ck('title-only slug matches on title subset',
+    svm({ title:'The Sound and the Fury', authors:['William Faulkner'] }, fury));
+  ck('companion rejected against a title-only slug',
+    !svm({ title:'A Study Guide for William Faulkner\'s The Sound and the Fury',
+           authors:['Gale'] }, fury));
+  ck('a different book entirely is rejected',
+    !svm({ title:'Light in August', authors:['William Faulkner'] }, fury));
+  ck('no title and no author is rejected', !svm({}, solitude));
 
   console.log('\namazonCover');
   // Amazon's ISBN-keyed image CDN. Measured 2026-11-23: 333x500 typical and

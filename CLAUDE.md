@@ -496,7 +496,7 @@ node tests/irv.js        # 14 — instant-runoff, incl. 4,000-election fuzz
 node tests/engine.js     # 36 — tally, archiving, typed attendance, the venue
                           #      line's address test, end-to-end
 node tests/shortlist.js  # 13 — the cut-short rule, 20,000-meeting fuzz
-node tests/lookup.js     # 117 — Open Library parsing/failure modes, edition
+node tests/lookup.js     # 159 — Open Library parsing/failure modes, edition
                           #      filtering, ISBN conversion both ways, pulling
                           #      an ISBN out of a pasted Amazon URL, telling
                           #      apart the four kinds of link that carry no
@@ -509,7 +509,8 @@ node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
 `buildAmazonLink`, `isbn10to13`, `parseAmazonISBN`, `classifyAmazonLink`,
-`parseAttendance`,
+`amazonTitleSlug`, `slugVolumeMatches`, `amazonCover`, `googleImageURL`,
+`coverLooksReal`, `parseAttendance`,
 `googleVolumeMatches`, `surnameMatches`, `cleanGoogleDescription`,
 `looksLikeAddress`, `mapLine`, or
 `suggestionWindowState`, run these. The regexes in the
@@ -611,6 +612,28 @@ rather than silently testing nothing.
     which URL actually survived (`resolvedCover`) and commits that, not
     `h.cover`. Without it the 1×1 blank both stretches across the jacket slot
     and gets written to the record as the book's `cover_url` for good.
+- **A Kindle link is rescued from its URL slug, not its ASIN.** The `B0…`
+  ASIN is Amazon-internal with no mapping to an ISBN, so a Kindle paste used
+  to dead-end. But the slug carries the title and usually the author
+  (`/Hundred-Solitude-Gabriel-García-Márquez-ebook/dp/B0BFK4THKQ`), so
+  `amazonTitleSlug()` → `googlePrintISBN()` → `lookupByISBN()` recovers the
+  print edition. **This is the common case, not an edge one** — Amazon's own
+  search results put the Kindle edition first, which is how members keep
+  landing on it.
+  Two things that make this harder than it looks:
+  - **A bare `/dp/<asin>` has no slug, and the HOST must not be mistaken for
+    one.** An early version cheerfully returned "www.amazon.com" as the
+    search query. `amazonTitleSlug` requires a path segment *before* `/dp/`.
+  - **Title overlap alone picks the study guide.** Gale's "A Study Guide for
+    Gabriel Garcia Marquez's One Hundred Years of Solitude" repeats both the
+    title and the author. `slugVolumeMatches()` accepts on either an AUTHOR
+    appearing in the slug (the real book is by García Márquez; companions are
+    by Gale, Bright Summaries, Harold Bloom) or every significant word of the
+    volume's TITLE appearing in the slug (which handles a title-only slug
+    like "Sound-Fury-Corrected-Text" and still rejects companions, whose
+    titles add words). Both signals are unit-tested against those exact real
+    companion volumes — shipping a study guide's ISBN as the book would be
+    worse than the dead end it replaced.
 - **Amazon's *descriptions* are not reachable, and that is not worth
   fighting.** The product page sends no CORS headers, returns 503 to a
   non-browser `User-Agent` (measured), and parsing it would be against their
