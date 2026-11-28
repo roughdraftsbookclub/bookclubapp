@@ -174,9 +174,20 @@ html[data-theme="lonesome"] .brandhdr .logo{ display:none; }
 /* The organizer console's header logo becomes the weathered sign.
 
    Two reasons, not one. The obvious one is that it matches the theme. The
-   real one is that the LOGO_SRC data URI renders badly at small sizes —
-   counters close up, so the O in ROUGH fills in solid. It is a low-
-   resolution PNG being scaled, and no CSS fixes that.
+   real one is that LOGO_SRC renders badly here: the counters close up, so
+   the O in ROUGH fills in solid.
+
+   That is a DOWNSCALING artifact, not a low-resolution one — worth getting
+   right, because the obvious fix is the wrong one. LOGO_SRC is a 658×411
+   PNG shown at 150px (0.23×), and at that size the white gaps inside the
+   letterforms fall below one pixel and vanish. Supplying a bigger PNG would
+   change nothing. What would actually fix it is an SVG, or a wordmark drawn
+   with heavier strokes for small sizes. The sign sidesteps it because its
+   wordmark is already large relative to the image.
+
+   Same artifact exists on the member home screen at 238px (0.36×), milder
+   but present — and visible whenever the theme is switched back to
+   Original, since the themed header hides the logo entirely.
 
    `content:` on an <img> swaps the rendered image while keeping the element
    and its alt text, which beats hiding it and faking a background.
