@@ -504,7 +504,7 @@ node tests/lookup.js     # 168 — Open Library parsing/failure modes, edition
                           #      blurb cleaning
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
-node tests/theme.js      # 37 — the theme contract: role tokens exist, no
+node tests/theme.js      # 85 — the theme contract: role tokens exist, no
                           #      colour literal sits where a theme cannot
                           #      reach it, and every declared fg/bg pair
                           #      clears a WCAG threshold
@@ -787,6 +787,42 @@ rather than silently testing nothing.
 ## Brand
 
 ### Theming — read before changing any colour
+
+**The live theme is chosen by `club.theme`, not by a deploy.** The client
+reads it, sets `<html data-theme="…">`, and `render()` re-applies it — so a
+change propagates to every open phone over the `rd-club` realtime channel.
+`THEMES_ALLOWED` in `index.html` is the whitelist; anything unrecognised,
+including the column being absent, renders the ORIGINAL palette. That is
+why the client is safe to ship before `supabase/patch_12.sql` runs.
+
+**To revert, during a meeting or otherwise:**
+
+```sql
+update club set theme = null where id = true;
+```
+
+Every phone repaints within a second or two. No push, no Pages rebuild.
+This is the entire reason the theme is data — it was shipped before a
+meeting on the organizer's call, and instant rollback is what makes that
+defensible.
+
+⚠️ **A theme rule outranks the base selected-state rule.**
+`html[data-theme=x] .pickcard` scores **(0,2,1)**; the base
+`.pickcard[aria-pressed="true"]` scores **(0,2,0)**. So a theme that styles
+`.pickcard` at all will silently flatten the selected border to look
+identical to unselected — on the voting screen. The lonesome theme hit
+exactly this. Any theme touching `.pickcard` MUST restate
+`border-color` under `.pickcard[aria-pressed="true"]`. `tests/theme.js`
+guards it, and that guard was validated by removing the fix and watching
+it fail.
+
+**The token tests did not catch that, and could not.** Every token was
+correct; the cascade was wrong. Colour checks run on declared values, not
+on what the browser actually computes. The way it WAS found was sweeping
+the rendered page for unreadable text and comparing computed styles of a
+selected versus unselected card. Do that on a real screen before shipping
+a theme; the suite is necessary, not sufficient.
+
 
 Colours are **role tokens on `:root`**, not literals. A theme should set
 tokens and nothing else; if it needs a selector override, that means a role

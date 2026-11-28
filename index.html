@@ -49,6 +49,23 @@
   --gold-tint-2:rgba(194,144,46,.18);
   --gold-glow:rgba(194,144,46,.16);   /* the selected-card halo */
   --surface-2:#FBFAF8;       /* subtly raised input / box surface */
+
+  /* The two filled surfaces. Both are navy today, which is why introducing
+     them changes nothing — but they are different ROLES and a theme needs
+     to colour them separately:
+       --primary  a filled action: primary button, seal, progress fills, steppers
+       --panel    a filled dark panel: meeting card, org bar, toast, avatar
+     Their foregrounds come with them, so a theme never has to guess what
+     text colour survives on top. */
+  --primary:#0E1A2B;    --on-primary:#FFFFFF;
+  /* A disabled action. Hardcoded until 2026-11-27, which on a dark theme
+     rendered a pale grey block with near-white text at 1.68:1 — found by
+     sweeping every screen for unreadable text, not by looking. */
+  --disabled:#B9BEC9;   --on-disabled:#F2F3F5;
+  --panel:#0E1A2B;      --on-panel:#F6F2EC;
+  --on-panel-2:#B9C3D2;                 /* the "7:00 PM · Hosted by" line */
+  --on-panel-3:#7D8CA3;                 /* the venue line under it */
+  --panel-dot:#5B6B82;                  /* the separator dot */
   --r-sm:8px; --r-md:12px; --r-lg:16px;
   --shadow:0 1px 2px rgba(14,26,43,.06),0 4px 14px rgba(14,26,43,.05);
   --serif:"Source Serif 4",Georgia,serif;
@@ -68,6 +85,103 @@ body{
 button{font:inherit;color:inherit;cursor:pointer;border:none;background:none}
 input,textarea{font:inherit;color:inherit}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ======================= THEME: LONESOME DOVE / WINTER =====================
+   Applied only when <html data-theme="lonesome">, which comes from
+   club.theme in the database. No attribute = the original palette,
+   untouched. Switching or reverting is one row update, propagated to every
+   open phone by the rd-club realtime channel that already existed.
+
+   Colours sampled from the organizer's artwork, not invented. Contrast is
+   BETTER than the default light palette throughout: gold on green is
+   7.39:1 (AAA) where gold on cream is 2.57:1 and fails. tests/theme.js runs
+   every declared pair against this theme as well as the default.
+
+   This block is almost entirely TOKENS. The handful of real rules below the
+   token list are structural (a photographic header, a garland strip) and
+   could not be expressed as a colour. If you find yourself adding a colour
+   override here, a role is missing from :root — add it there instead.
+   ========================================================================= */
+html[data-theme="lonesome"]{
+  --cream:#0C1A0A;          /* app background, between the cards */
+  --card:#1C3A1B;           /* every card surface */
+  --surface-2:#173016;      /* inputs and raised boxes */
+  --ink:#FAF5EE;
+  --ink-2:#C9D3BC;
+  --ink-3:#9AAC91;
+  --hair:rgba(226,185,119,.22);
+  --gold:#E2B470;
+  --gold-2:#F3D9AB;
+  --gold-dim:#E2B470;       /* on dark, the dimmed gold would vanish */
+  --gold-deep:#D9B06A;
+  --gold-tint:rgba(226,185,119,.14);
+  --gold-tint-2:rgba(226,185,119,.18);
+  --gold-glow:rgba(226,185,119,.26);
+  --navy:#EFEDE4;           /* "primary foreground": headings and body */
+  --danger:#E0836A;
+  --green:#6FBF8F;
+
+  --on-gold:#1A2E16;        /* MUST stay dark: tick, rank badges, next tag */
+  --on-gold-warm:#1A2E16;
+
+  --primary:#53010D;        /* the red: buttons, seal, progress fills */
+  --on-primary:#F3D9AB;
+  --disabled:#243E22;       /* a disabled action reads as "not yet", not as
+                               a hole in the page */
+  --on-disabled:#86997E;
+  --panel:#17301A;          /* filled panels: meeting card, org bar, toast */
+  --on-panel:#F2EFE6;
+  --on-panel-2:#C3CDB6;
+  --on-panel-3:#9DAE94;
+  --panel-dot:#6E8167;
+
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.30);
+}
+
+/* -- structural, not colour ------------------------------------------------ */
+html[data-theme="lonesome"] body{ background:#2B1813; }
+html[data-theme="lonesome"] .phone{ border-color:#2A1A12; }
+
+/* Cards gain the gold hairline the artwork shows. */
+html[data-theme="lonesome"] .pickcard,
+html[data-theme="lonesome"] .rankslot,
+html[data-theme="lonesome"] .resultcard,
+html[data-theme="lonesome"] .panel{ border:1px solid var(--hair); }
+
+/* A selected book must keep all THREE signals: a lifted surface, the gold
+   border, and the tickmark.
+
+   `border-color` is restated here deliberately. The hairline rule above is
+   `html[data-theme=...] .pickcard`, which scores (0,2,1) on specificity and
+   therefore BEATS the base `.pickcard[aria-pressed="true"]` at (0,2,0) —
+   so without this line the theme silently flattened the selected border to
+   the same hairline as an unselected card. Caught by measuring the rendered
+   page, not by the token tests: the tokens were correct the whole time and
+   the CASCADE was wrong. Any future theme adding a `.pickcard` rule has to
+   do the same. */
+html[data-theme="lonesome"] .pickcard[aria-pressed="true"]{
+  background:#27491F; border-color:var(--gold);
+}
+
+/* The logo is navy artwork drawn for a LIGHT background and disappears on
+   dark green. The photograph carries the logo on a lit sign instead. */
+html[data-theme="lonesome"] .brandhdr{
+  background:#2B1813 center 42%/cover no-repeat url('themes/lonesome-dove/header.jpg');
+  height:196px; border-bottom:1px solid var(--hair);
+}
+html[data-theme="lonesome"] .brandhdr .logo{ display:none; }
+
+/* Garland as a strip ABOVE the title, never behind it — gold serif over a
+   busy photograph is the one legibility mistake this theme can make. */
+html[data-theme="lonesome"] .appbar{
+  background:var(--cream) top/100% 42px no-repeat url('themes/lonesome-dove/garland.jpg');
+  padding-top:52px;
+}
+
+/* The one red feature card, as in the artwork. */
+html[data-theme="lonesome"] .nowcard{
+  background:var(--primary); border:1px solid rgba(226,185,119,.42);
+}
 
 /* ============================ SIMULATOR CHROME ============================ */
 .sim{ width:100%; max-width:430px; margin-bottom:14px; color:#E8E9EC; }
@@ -146,8 +260,8 @@ input,textarea{font:inherit;color:inherit}
   transition:transform .12s ease,background .15s ease,opacity .15s ease;
 }
 .btn:active{transform:scale(.985)}
-.btn-primary{background:var(--navy);color:#fff}
-.btn-primary:disabled{background:#B9BEC9;color:#F2F3F5;cursor:not-allowed;transform:none}
+.btn-primary{background:var(--primary);color:var(--on-primary)}
+.btn-primary:disabled{background:var(--disabled);color:var(--on-disabled);cursor:not-allowed;transform:none}
 .btn-gold{background:var(--gold);color:var(--on-gold-warm)}
 .btn-danger{background:transparent;color:var(--danger);border:1.5px solid rgba(179,69,47,.4)}
 .btn-outline{background:transparent;color:var(--navy);border:1.5px solid rgba(14,26,43,.25)}
@@ -300,7 +414,7 @@ input,textarea{font:inherit;color:inherit}
 .waiting p{ margin:0; font-size:14px; line-height:1.6; color:var(--ink-2); max-width:250px; }
 .waiting .note{ font-size:12.5px; color:var(--ink-3); }
 .seal{
-  width:88px; height:88px; border-radius:50%; background:var(--navy);
+  width:88px; height:88px; border-radius:50%; background:var(--primary);
   display:grid; place-items:center; color:var(--gold); margin-bottom:4px;
   animation:sealIn .5s cubic-bezier(.34,1.4,.64,1) both;
 }
@@ -343,7 +457,7 @@ input,textarea{font:inherit;color:inherit}
 .barrow .bl .bn{ font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .barrow .bl .bv{ flex:0 0 auto; color:var(--ink-3); font-variant-numeric:tabular-nums; }
 .bartrack{ height:7px; border-radius:4px; background:rgba(14,26,43,.08); overflow:hidden; }
-.barfill{ height:100%; border-radius:4px; background:var(--navy); width:0; transition:width .8s cubic-bezier(.32,.72,0,1); }
+.barfill{ height:100%; border-radius:4px; background:var(--primary); width:0; transition:width .8s cubic-bezier(.32,.72,0,1); }
 .barfill.gold{ background:var(--gold); }
 .barrow.out .bn{ text-decoration:line-through; color:var(--ink-3); }
 .barrow.out .barfill{ background:#C7CBD3; }
@@ -353,7 +467,7 @@ input,textarea{font:inherit;color:inherit}
   font-size:11px; font-weight:600; padding:5px 10px; border-radius:999px;
   background:rgba(14,26,43,.07); color:var(--ink-2);
 }
-.roundtabs button[aria-pressed="true"]{ background:var(--navy); color:#fff; }
+.roundtabs button[aria-pressed="true"]{ background:var(--primary); color:var(--on-primary); }
 .roundnote{ font-size:11.5px; color:var(--ink-3); line-height:1.5; margin-top:10px; }
 
 .archrow{ display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--hair); }
@@ -405,7 +519,7 @@ input,textarea{font:inherit;color:inherit}
 }
 .bigcount small{ font-size:17px; color:var(--ink-3); font-weight:400; }
 .progtrack{ height:8px; border-radius:5px; background:rgba(14,26,43,.08); overflow:hidden; margin:12px 0 4px; }
-.progfill{ height:100%; border-radius:5px; background:var(--navy); transition:width .5s cubic-bezier(.32,.72,0,1); }
+.progfill{ height:100%; border-radius:5px; background:var(--primary); transition:width .5s cubic-bezier(.32,.72,0,1); }
 .subnote{ font-size:11.5px; color:var(--ink-3); line-height:1.55; }
 
 .qrbox{
@@ -455,7 +569,7 @@ input,textarea{font:inherit;color:inherit}
 .stepperrow{ display:flex; align-items:center; gap:16px; }
 .stepbtn{
   flex:0 0 auto; width:46px; height:46px; border-radius:var(--r-md);
-  background:var(--navy); color:#fff; font-size:24px; font-weight:700;
+  background:var(--primary); color:var(--on-primary); font-size:24px; font-weight:700;
   display:grid; place-items:center; border:none; line-height:1;
 }
 .stepbtn:disabled{ opacity:.32; }
@@ -546,7 +660,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 }
 .whoami .av{
   flex:0 0 auto; width:26px; height:26px; border-radius:50%;
-  background:var(--navy); color:var(--cream);
+  background:var(--panel); color:var(--on-panel);
   display:grid; place-items:center; font-size:12px; font-weight:700;
 }
 .whoami .wm{ flex:1; font-size:12.5px; color:var(--ink-3); }
@@ -555,7 +669,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 .lnk:active{ color:var(--navy); }
 
 .meetcard{
-  background:var(--navy); border-radius:var(--r-md); padding:16px 16px 15px;
+  background:var(--panel); border-radius:var(--r-md); padding:16px 16px 15px;
   margin-bottom:12px; position:relative; overflow:hidden;
 }
 .meetcard .k{
@@ -563,15 +677,15 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   color:var(--gold-2); margin-bottom:7px;
 }
 .meetcard .d{
-  font-family:var(--serif); font-size:23px; font-weight:600; color:var(--cream);
+  font-family:var(--serif); font-size:23px; font-weight:600; color:var(--on-panel);
   line-height:1.2; letter-spacing:-.2px;
 }
 .meetcard .w{
   display:flex; align-items:center; gap:9px; margin-top:8px;
-  font-size:15px; color:#B9C3D2;
+  font-size:15px; color:var(--on-panel-2);
 }
-.meetcard .w i{ width:3px; height:3px; border-radius:50%; background:#5B6B82; }
-.meetcard .n{ font-size:13px; color:#7D8CA3; margin-top:5px; }
+.meetcard .w i{ width:3px; height:3px; border-radius:50%; background:var(--panel-dot); }
+.meetcard .n{ font-size:13px; color:var(--on-panel-3); margin-top:5px; }
 /* The venue line becomes a maps link when there is an address to point at.
    Built from the stored venue + address rather than a saved URL, so it works
    for every meeting without another column and can't rot the way a shortlink
@@ -581,7 +695,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   display:inline-block; padding:3px 0; text-decoration:underline;
   text-decoration-color:rgba(125,140,163,.5); text-underline-offset:3px;
 }
-.meetcard a.n:hover, .meetcard a.n:active{ color:#A9B8CE; }
+.meetcard a.n:hover, .meetcard a.n:active{ color:var(--on-panel-2); }
 .meetcard .cd{
   position:absolute; top:14px; right:14px;
   font-size:10.5px; font-weight:700; letter-spacing:.4px;
@@ -689,7 +803,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 /* ---- organizer strip ---- */
 .orgbar{
   flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
-  gap:10px; padding:7px 12px 7px 14px; background:var(--navy);
+  gap:10px; padding:7px 12px 7px 14px; background:var(--panel);
 }
 .orgbar .ol{
   display:flex; align-items:center; gap:7px;
@@ -814,7 +928,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 /* ================================= TOAST ================================== */
 .toast{
   position:absolute; left:16px; right:16px; bottom:22px; z-index:60;
-  background:var(--navy); color:#fff; border-radius:var(--r-md);
+  background:var(--panel); color:var(--on-panel); border-radius:var(--r-md);
   padding:13px 15px; font-size:13.5px; display:flex; gap:10px; align-items:center;
   box-shadow:0 8px 28px rgba(14,26,43,.4);
   transform:translateY(150%); opacity:0;
@@ -4288,7 +4402,24 @@ function organizerGate(){
   $('#g-cancel').onclick = () => { STORE.adminOpen = false; render(); };
 }
 
+/* The only theme a phone will accept, so a stray value in the database
+   cannot inject an attribute or leave the app in a half-painted state.
+   Anything unrecognised — including the column not existing yet — falls
+   back to the default palette. */
+const THEMES_ALLOWED = ['lonesome'];
+
+function applyTheme(){
+  const want = String((STORE.club && STORE.club.theme) || '').trim();
+  const next = THEMES_ALLOWED.includes(want) ? want : '';
+  const root = document.documentElement;
+  if (next) root.setAttribute('data-theme', next);
+  else root.removeAttribute('data-theme');
+}
+
 function render(){
+  // Before renderIdentity so the first paint is already themed — a flash of
+  // the wrong palette on every render would be worse than no theme at all.
+  applyTheme();
   renderIdentity();
   vp().className = 'viewport';
   const org = activeDevice().isOrganizer;
@@ -4352,6 +4483,9 @@ function clubFromRow(r){
     host: r.host || '',
     location: r.location || '',
     locationNote: r.location_note || '',
+    // Absent until supabase/patch_12.sql runs, and absent is the DEFAULT
+    // palette — which is why the client can ship before the column exists.
+    theme: r.theme || '',
   };
 }
 

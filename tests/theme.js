@@ -58,8 +58,16 @@ const BASE = tokensFrom(rootMatch[1]);
 /* Themes. The base palette is the live one; add a block per theme and every
    check below runs against it too. A theme that only overrides SOME tokens
    inherits the rest, which is exactly how a real theme behaves. */
+function themeBlock(name){
+  const re = new RegExp('html\\[data-theme="' + name + '"\\]\\{([\\s\\S]*?)\\n\\}');
+  const m = src.match(re);
+  if (!m) throw new Error('EXTRACT FAILED: no token block for theme "' + name + '"');
+  return tokensFrom(m[1]);
+}
+
 const THEMES = {
   'base (live)': {},
+  'lonesome':    themeBlock('lonesome'),
 };
 
 // ---- colour maths ---------------------------------------------------------
@@ -124,13 +132,20 @@ const PAIRS = [
   ['--gold',         '--cream',   'selected-card border on page [VOTING]',3.0, 2.57],
   ['--danger',       '--card',    'destructive text',                     4.5],
   ['--ink',          '--surface-2','text in an input box',                4.5],
+  ['--on-primary',   '--primary', 'label on a primary button',            4.5],
+  ['--on-panel',     '--panel',   'headline on a filled panel',           4.5],
+  ['--on-panel-2',   '--panel',   'time/host line on a panel',            4.5],
+  ['--on-panel-3',   '--panel',   'venue line on a panel',                3.0],
+  ['--gold-2',       '--panel',   'panel eyebrow label',                  4.5],
 ];
 
 /* Tokens the app genuinely depends on. A theme missing one of these inherits
    the base value, which on an inverted palette is how you get invisible text. */
 const REQUIRED = ['--ink','--ink-2','--ink-3','--cream','--card','--gold','--gold-2',
                   '--navy','--hair','--danger','--on-gold','--on-gold-warm',
-                  '--gold-dim','--gold-deep','--gold-tint','--gold-glow','--surface-2'];
+                  '--gold-dim','--gold-deep','--gold-tint','--gold-glow','--surface-2',
+                  '--primary','--on-primary','--panel','--on-panel',
+                  '--on-panel-2','--on-panel-3','--panel-dot'];
 
 console.log('theme tokens');
 for (const t of REQUIRED) ck(`${t} is defined`, !!BASE[t], 'missing from :root');
@@ -151,6 +166,27 @@ ck('the selected-card halo derives from a token',
    between them in the template, so without display:block they render as
    "ShogunJames Clavell" and .pa's margin-top silently does nothing. That
    shipped and sat on the live approval grid until 2026-11-27. */
+/* CASCADE guard. A theme rule like `html[data-theme=x] .pickcard` scores
+   (0,2,1) on specificity and therefore BEATS the base
+   `.pickcard[aria-pressed="true"]` at (0,2,0). A theme that styles
+   .pickcard without restating the selected border silently flattens
+   selection to look identical to unselected — on the voting screen.
+   That happened while building the lonesome theme and was caught by
+   measuring the RENDERED page: every token was correct and the cascade
+   was wrong, so no amount of colour checking would have found it. */
+console.log('\ncascade guards');
+for (const name of Object.keys(THEMES)){
+  if (name === 'base (live)') continue;
+  const t = name.replace(/[^a-z0-9-]/gi, '');
+  const base = 'html\\[data-theme="' + t + '"\\]';
+  const stylesCard = new RegExp(base + '[^{]*\\.pickcard[^[{][^{]*\\{').test(src);
+  if (!stylesCard){ ck(`${t}: does not restyle .pickcard`, true); continue; }
+  const m = new RegExp(base + ' \\.pickcard\\[aria-pressed="true"\\]\\{([^}]*)\\}').exec(src);
+  ck(`${t}: restates the selected-card border`,
+     !!m && /border-color\s*:/.test(m[1]),
+     'a theme .pickcard rule outranks .pickcard[aria-pressed] — selection goes invisible');
+}
+
 console.log('\nlayout contracts');
 ck('approval-card title is block-level',
    /\.pickcard \.pt\{[^}]*display:block/.test(src),
@@ -159,7 +195,20 @@ ck('approval-card author is block-level',
    /\.pickcard \.pa\{[^}]*display:block/.test(src),
    'and its margin-top does nothing while inline');
 
+/* A theme that forgets a token inherits the base value. On an inverted
+   palette that is how you get dark-on-dark. Every theme other than the base
+   must therefore restate the whole surface/foreground set explicitly. */
+const MUST_RESTATE = ['--cream','--card','--surface-2','--ink','--ink-2','--ink-3',
+                      '--navy','--gold','--gold-dim','--on-gold','--primary',
+                      '--on-primary','--panel','--on-panel'];
 for (const [name, over] of Object.entries(THEMES)){
+  if (name !== 'base (live)'){
+    console.log(`
+theme "${name}" restates every surface token`);
+    for (const t of MUST_RESTATE)
+      ck(`${t} restated`, Object.prototype.hasOwnProperty.call(over, t),
+         'inherited from the base palette — on an inverted theme that is a bug');
+  }
   const T = { ...BASE, ...over };
   console.log(`\ncontrast — ${name}`);
   for (const [fgT, bgT, label, min, known] of PAIRS){
