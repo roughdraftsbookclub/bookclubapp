@@ -166,8 +166,16 @@ html[data-theme="lonesome"] .pickcard[aria-pressed="true"]{
 /* The logo is navy artwork drawn for a LIGHT background and disappears on
    dark green. The photograph carries the logo on a lit sign instead. */
 html[data-theme="lonesome"] .brandhdr{
-  background:#2B1813 center 42%/cover no-repeat url('themes/lonesome-dove/header.jpg');
-  height:196px; border-bottom:1px solid var(--hair);
+  /* `contain` + the artwork's OWN ratio, so the whole scene shows. A fixed
+     196px height with `cover` was cropping 77px — losing the roofline at the
+     top and the pig and the jug along the bottom, which are the parts that
+     make it a porch rather than a sign on a wall.
+     min-height is a floor, not the height: if aspect-ratio ever fails to
+     resolve, the header degrades to the old size instead of collapsing. */
+  background:#2B1813 center/contain no-repeat url('themes/lonesome-dove/header.jpg');
+  aspect-ratio:900 / 657;
+  height:auto; min-height:196px; padding:0;
+  border-bottom:1px solid var(--hair);
 }
 html[data-theme="lonesome"] .brandhdr .logo{ display:none; }
 
