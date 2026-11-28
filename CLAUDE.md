@@ -795,7 +795,13 @@ change propagates to every open phone over the `rd-club` realtime channel.
 including the column being absent, renders the ORIGINAL palette. That is
 why the client is safe to ship before `supabase/patch_12.sql` runs.
 
-**To revert, during a meeting or otherwise:**
+**To revert, during a meeting: the organizer console's Meeting tab, bottom
+panel, "Appearance" → Original.** It calls `set_theme` (passcode-gated) and
+every phone repaints. Deliberately on the Meeting tab because that is the
+tab already open while running a meeting, and deliberately NOT requiring a
+laptop — the organizer is not at a desk on meeting night.
+
+Equivalent from a SQL editor, if that is somehow easier:
 
 ```sql
 update club set theme = null where id = true;

@@ -621,6 +621,19 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
    classes replace those literals. Same colours, now themeable.
    Added 2026-11-27 with the role tokens. */
 .goldnote{ color:var(--gold-dim); }
+
+/* Theme picker in the organizer console. Tokens only, and a 44px tap target,
+   because it has to be legible and hittable in whichever theme is currently
+   the problem. */
+.themepick{ display:flex; gap:8px; }
+.themepick button{
+  flex:1 1 0; padding:11px 8px; border-radius:var(--r-sm); min-height:44px;
+  border:1.5px solid var(--hair); background:var(--surface-2);
+  color:var(--ink-2); font-size:13px; font-weight:600;
+}
+.themepick button[aria-pressed="true"]{
+  background:var(--primary); color:var(--on-primary); border-color:var(--primary);
+}
 .goldnote-deep{ color:var(--gold-deep); }
 
 .switch{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
@@ -3868,9 +3881,42 @@ function adminMeeting(el){
       <input class="control" id="c-note" type="text" value="${esc(c.locationNote)}" placeholder="Park on the street">
       <div style="height:13px"></div>
       <button class="btn btn-primary btn-sm" id="c-save">Update meeting details</button>
+    </div>
+
+    ${/* Deliberately the LAST panel on the Meeting tab — the tab the organizer
+          already has open while running a meeting. The point of this control
+          is that reverting a theme must not require a desktop and a SQL
+          editor: it takes effect on every phone immediately, over the club
+          realtime channel. */''}
+    <div class="panel">
+      <h3>Appearance</h3>
+      <div class="themepick">
+        ${[['lonesome','Lonesome Dove'],['','Original']].map(([v,label]) =>
+          `<button data-theme-set="${v}" aria-pressed="${(c.theme || '') === v}">${label}</button>`).join('')}
+      </div>
+      <div class="subnote" style="margin-top:9px">
+        Changes what everyone sees straight away. If anything looks wrong
+        mid-meeting, switch to Original here — no laptop needed.
+      </div>
     </div>`;
 
   const on = (sel,fn) => { const e = $(sel); if (e) e.onclick = fn; };
+
+  $$('[data-theme-set]').forEach(el => el.onclick = async () => {
+    const want = el.dataset.themeSet || '';
+    if ((STORE.club.theme || '') === want) return;            // already there
+    const { error } = await supa.rpc('set_theme', {
+      p_code: STORE.organizerCode, p_theme: want || null,
+    });
+    if (error){ toast('Could not change the look — try again'); return; }
+    STORE.club.theme = want;
+    // render(), NOT renderAdmin(): only render() re-applies the theme
+    // attribute, so the narrower call would update the database and leave
+    // this phone sitting on the old palette.
+    render();
+    toast(want ? 'Everyone sees the new look now' : 'Back to the original look');
+  });
+
   on('#a-start', async () => {
     const { error } = await supa.rpc('advance_phase', {
       p_code: STORE.organizerCode, p_meeting_id: m.id, p_new_phase: 'approval',
