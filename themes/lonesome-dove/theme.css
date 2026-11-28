@@ -1,0 +1,141 @@
+/* ===========================================================================
+   LONESOME DOVE / CHRISTMAS — theme overlay, MOCKUP ONLY
+   ---------------------------------------------------------------------------
+   This file is loaded only by theme-lonesome-preview.html. It never touches
+   index.html. Every colour below was sampled from the organizer's own mockup
+   artwork rather than invented.
+
+       page / outer   #1B0F0B   dark brown
+       app background #10220F   near-black green
+       card           #1B361D   forest green
+       gold           #E2B977   warmer and lighter than the live #C2902E
+       body text      #EFEDE4   cream
+       red accent     #5E1D1C   the "Suggest a Book" / this-month red
+
+   The live palette is a LIGHT theme (cream page, white cards, dark ink). This
+   is an inversion, not a hue swap, so three things need care and all three are
+   handled below:
+
+   1. --navy does THREE jobs in the live CSS (heading text, button background,
+      and dark text sitting ON a gold chip). It is repointed at the cream
+      foreground here, and the ten background uses plus the four on-gold uses
+      are overridden individually. Miss the on-gold ones and the approval
+      screen's checkmark and the ranking screen's 1-2-3 badges turn gold-on-
+      gold and vanish.
+   2. A handful of literal hex values were tuned for a light background —
+      #7A5A16 (small gold labels), #FFF, #B9BEC9 — and have to be restated.
+   3. The selected-state halo on a pick card is a hardcoded
+      rgba(194,144,46,.16), so it keeps the OLD gold unless restated.
+   =========================================================================== */
+
+:root{
+  --cream:#10220F;          /* app background */
+  --card:#1B361D;           /* every card surface */
+  --ink:#EFEDE4;            /* body text */
+  --ink-2:#C3CDB6;          /* secondary */
+  --ink-3:#94A68B;          /* tertiary — 45 uses, the most common text tone */
+  --hair:rgba(226,185,119,.22);
+  --gold:#E2B977;
+  --gold-2:#F2D7A6;
+  --navy:#EFEDE4;           /* repointed: now "primary foreground" */
+  --danger:#D4674C;
+  --green:#4E9B6E;
+  --shadow:0 1px 2px rgba(0,0,0,.35),0 6px 18px rgba(0,0,0,.30);
+
+  /* new roles this theme needs */
+  --on-gold:#1A2E16;        /* dark ink for anything sitting on gold */
+  --accent:#5E1D1C;         /* the red */
+  --accent-2:#7A2725;
+}
+
+body{ background:#1B0F0B; }
+.phone{ background:var(--cream); border-color:#2A1A12; }
+
+/* ---- cards get the gold hairline the mockup shows ----------------------- */
+.pickcard,.rankslot,.resultcard,.panel,.bookcard,.tile,.meetcard,.helpnote,
+.lockcard,.adminbook,.schedrow,.membernote{ border-color:var(--hair); }
+.pickcard,.rankslot,.resultcard,.panel{
+  border:1px solid var(--hair); background:var(--card);
+}
+
+/* ---- 1. --navy used as a BACKGROUND -------------------------------------- */
+.btn-primary{
+  background:var(--accent); color:var(--gold-2);
+  border:1px solid rgba(226,185,119,.45);
+}
+.btn-primary:disabled{ background:#2A2420; color:#6E6A63; border-color:transparent; }
+.btn-gold{ background:var(--gold); color:var(--on-gold); }
+.btn-outline{ background:transparent; color:var(--gold); border:1.5px solid rgba(226,185,119,.42); }
+.btn-ghost{ background:transparent; color:var(--gold); }
+.seal{ background:var(--accent); }
+.barfill,.progfill{ background:var(--gold); }
+.roundtabs button[aria-pressed="true"]{ background:var(--accent); color:var(--gold-2); }
+.stepbtn{ background:var(--card); color:var(--gold); border:1px solid var(--hair); }
+
+/* ---- 2. the four places dark-on-gold MUST stay dark ---------------------- */
+/*    Get these wrong and the voting screens lose their selection marks.     */
+.tickmark{ color:var(--on-gold); }
+.nexttag{ color:var(--on-gold); }
+.rankslot .badge{ color:var(--on-gold); }
+.toast .tick{ color:var(--on-gold); }
+
+/* ---- 3. the selected-state halo, restated in the new gold ---------------- */
+.pickcard[aria-pressed="true"]{
+  border-color:var(--gold);
+  box-shadow:0 0 0 3px rgba(226,185,119,.26),var(--shadow);
+  background:#23431F;
+}
+.pickcard.maxed{ opacity:.38; }
+
+/* ---- literal colours that assumed a light background --------------------- */
+.conf.low,.adminbook .tag.review,.tiecard h3{ color:var(--gold) !important; background:rgba(226,185,119,.14); }
+.flabel,.seclabel{ color:var(--gold) !important; }
+.control{
+  background:#162A14; color:var(--ink);
+  border:1px solid var(--hair);
+}
+.control::placeholder{ color:#7E8E77; }
+.control:focus{ border-color:var(--gold); box-shadow:0 0 0 3px rgba(226,185,119,.18); }
+.appbar .nav-btn:active{ background:rgba(226,185,119,.12); }
+.cover .ct,.cover .ca,.cover .glyph{ color:#F2EFE6; }
+.toast{ background:#24170F; color:var(--ink); border:1px solid var(--hair); }
+
+/* ---- typography: headings go gold, as in the mockup ---------------------- */
+.appbar h1,.waiting h2,.detail h2,.winner h2,.tile .t,.meetcard .d{
+  color:var(--gold);
+}
+.bookcard .bt,.pickcard .pt,.rankslot .rt{ color:var(--ink); }
+
+/* ---- the two feature cards on the home screen ---------------------------- */
+/*    meetcard stays green; the this-month card takes the red, matching the
+      mockup where "THIS MONTH'S BOOK" is the one red panel on the page.     */
+.meetcard{ background:#17301A; border:1px solid var(--hair); }
+.meetcard .n,.meetcard a.n{ color:var(--ink-2); }
+.nowcard{ background:var(--accent); border:1px solid rgba(226,185,119,.42); }
+.nowcard .t,.nowcard .bt{ color:var(--gold-2); }
+.nowcard .a{ color:#E8D6C4; }
+
+/* ---- the photographic header -------------------------------------------- */
+/*    .brandhdr is the existing logo strip. The logo is NAVY artwork drawn for
+      a LIGHT background (CLAUDE.md says so explicitly), so on dark green it
+      nearly disappears. Two ways out and this mockup shows the second:
+        a) keep a light plate behind the logo, or
+        b) replace the strip with the photographic header, where the logo
+           already sits on a lit wooden sign.
+      Shipping (b) means real image files — see the size note in the
+      write-up. MOCKUP ONLY.                                                 */
+.brandhdr{
+  background:#1B0F0B center 42%/cover no-repeat url('header.jpg');
+  height:196px; border-bottom:1px solid var(--hair);
+  display:flex; align-items:flex-end; justify-content:center;
+}
+.brandhdr .logo{ display:none; }     /* the sign in the photo IS the logo */
+
+/* The pine garland sits ABOVE the title as its own strip, never behind it.
+   Gold serif on a busy photograph is the one legibility mistake this theme
+   can easily make — the organizer's own mockup puts the garland at the very
+   top with the heading on plain dark below, and that is the right call. */
+.appbar{
+  background:#10220F top/100% 42px no-repeat url('garland.jpg');
+  padding-top:52px;
+}

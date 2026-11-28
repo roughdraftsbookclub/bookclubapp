@@ -504,6 +504,10 @@ node tests/lookup.js     # 168 — Open Library parsing/failure modes, edition
                           #      blurb cleaning
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
+node tests/theme.js      # 35 — the theme contract: role tokens exist, no
+                          #      colour literal sits where a theme cannot
+                          #      reach it, and every declared fg/bg pair
+                          #      clears a WCAG threshold
 ```
 
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
@@ -770,6 +774,47 @@ rather than silently testing nothing.
 ---
 
 ## Brand
+
+### Theming — read before changing any colour
+
+Colours are **role tokens on `:root`**, not literals. A theme should set
+tokens and nothing else; if it needs a selector override, that means a role
+is missing from the base and the base is what to fix. Letting each theme
+carry its own override pile is how this rots.
+
+**`--on-gold` is the one that will bite you.** Four chips put dark text or
+icons on a gold disc — the approval tick, the ranking 1-2-3 badges, the
+"next" tag, the toast tick. They used to read `var(--navy)`, so a dark theme
+that repointed `--navy` at a light colour rendered them cream-on-gold at
+**1.57:1: an invisible checkmark on the voting screen.** Keep `--on-gold`
+dark in every theme. `tests/theme.js` asserts it.
+
+`--on-gold-warm` (`#1F1704`) is a *second* on-gold value the gold button and
+practice bar already used. Tokenising surfaced the inconsistency. The two are
+kept apart only so the 2026-11-27 refactor stayed pixel-identical — worth
+unifying deliberately, as its own change.
+
+**`tests/theme.js` carries recorded shortfalls, not a clean bill.** The live
+palette already fails three pairs: the selected-card border is 2.87:1 on a
+card and 2.57:1 on the page, and tertiary text on the page is 2.90:1. They
+are listed with their current ratios and held at "no worse than", so they
+print on every run and a theme cannot quietly degrade them. The selection
+border is not an unguarded failure — selection carries three signals, and
+the tickmark clears 6.10:1 as a *shape* change. A dark palette improves the
+border to ~7:1.
+
+⚠️ **A theme is the only change class that passes all 255 other tests and can
+still break a meeting.** Those suites are pure functions and cannot see a
+line of CSS. `tests/theme.js` covers the dangerous part — contrast — but its
+pair list is **declared, not discovered**: a genuinely new fg/bg combination
+has to be added or it goes unchecked. Nothing automated can tell you a theme
+is tiring to read at 9pm in a dim room. Look at it on a real phone.
+
+Still to do before any theme ships: a `club.theme` column plus
+`body[data-theme]`, so switching is a database update that propagates over
+the existing `rd-club` realtime channel and **rolls back in one click**
+rather than needing a push and a Pages rebuild. Deferred past January
+deliberately — see `themes/lonesome-dove/README.md` for the draft.
 
 Navy `#0E1A2B`, gold `#C2902E`, cream `#F6F2EC`. Source Serif 4 for display,
 Inter for UI. The logo is the owner's artwork, embedded as a data URI — it is

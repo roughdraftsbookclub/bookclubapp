@@ -25,6 +25,30 @@
   --navy:#0E1A2B; --navy-2:#1C3049; --gold:#C2902E; --gold-2:#DCAE5C;
   --cream:#F6F2EC; --card:#FFF; --ink:#1A1A1A; --ink-2:#5A6070; --ink-3:#8A8F9C;
   --hair:#E4E1DA; --danger:#B3452F; --green:#2E6B4F;
+
+  /* ROLE tokens. Added 2026-11-27 so a theme can repaint the app by setting
+     variables instead of overriding selectors. Each one replaces a literal
+     that was repeated in the stylesheet, and in five cases inline in JS
+     where CSS could not reach it at all.
+
+     --on-gold is the important one: four chips put dark text/icons ON a gold
+     disc (the approval tick, the ranking 1-2-3 badges, the "next" tag, the
+     toast tick). They read var(--navy) before, so a dark theme repointing
+     --navy at a light colour made them cream-on-gold at 1.57:1 — an
+     invisible checkmark on the voting screen. Keep this dark in every theme.
+
+     --on-gold-warm is a SECOND on-gold value (#1F1704) that the gold button
+     and the practice bar already used. Tokenising surfaced the
+     inconsistency; the two are kept apart here only to leave this refactor
+     pixel-identical. Worth unifying deliberately, as its own change. */
+  --on-gold:#0E1A2B;
+  --on-gold-warm:#1F1704;
+  --gold-dim:#7A5A16;        /* gold that stays readable at small sizes */
+  --gold-deep:#6B4E13;       /* a shade darker; the locked-suggestions card */
+  --gold-tint:rgba(194,144,46,.16);
+  --gold-tint-2:rgba(194,144,46,.18);
+  --gold-glow:rgba(194,144,46,.16);   /* the selected-card halo */
+  --surface-2:#FBFAF8;       /* subtly raised input / box surface */
   --r-sm:8px; --r-md:12px; --r-lg:16px;
   --shadow:0 1px 2px rgba(14,26,43,.06),0 4px 14px rgba(14,26,43,.05);
   --serif:"Source Serif 4",Georgia,serif;
@@ -86,7 +110,7 @@ input,textarea{font:inherit;color:inherit}
 /* practice banner */
 .practicebar{
   flex:0 0 auto; background:repeating-linear-gradient(135deg,#C2902E,#C2902E 10px,#A87B22 10px,#A87B22 20px);
-  color:#1F1704; font-size:10.5px; font-weight:700; letter-spacing:1.3px;
+  color:var(--on-gold-warm); font-size:10.5px; font-weight:700; letter-spacing:1.3px;
   text-align:center; padding:5px; text-transform:uppercase;
 }
 
@@ -124,7 +148,7 @@ input,textarea{font:inherit;color:inherit}
 .btn:active{transform:scale(.985)}
 .btn-primary{background:var(--navy);color:#fff}
 .btn-primary:disabled{background:#B9BEC9;color:#F2F3F5;cursor:not-allowed;transform:none}
-.btn-gold{background:var(--gold);color:#1F1704}
+.btn-gold{background:var(--gold);color:var(--on-gold-warm)}
 .btn-danger{background:transparent;color:var(--danger);border:1.5px solid rgba(179,69,47,.4)}
 .btn-outline{background:transparent;color:var(--navy);border:1.5px solid rgba(14,26,43,.25)}
 .btn-ghost{background:transparent;color:var(--navy);height:44px}
@@ -174,13 +198,13 @@ input,textarea{font:inherit;color:inherit}
 }
 @keyframes pop{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
 .pickcard:active{transform:scale(.97)}
-.pickcard[aria-pressed="true"]{ border-color:var(--gold); box-shadow:0 0 0 3px rgba(194,144,46,.16),var(--shadow); }
+.pickcard[aria-pressed="true"]{ border-color:var(--gold); box-shadow:0 0 0 3px var(--gold-glow),var(--shadow); }
 .pickcard.maxed{ opacity:.42; }
 .pickcard .pt{ font-size:calc(12.5px * var(--book-title-scale)); font-weight:700; line-height:1.25; color:var(--ink); }
 .pickcard .pa{ font-size:11px; color:var(--ink-3); margin-top:2px; }
 .tickmark{
   position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%;
-  background:var(--gold); color:var(--navy); display:grid; place-items:center;
+  background:var(--gold); color:var(--on-gold); display:grid; place-items:center;
   transform:scale(0); transition:transform .22s cubic-bezier(.34,1.56,.64,1);
   box-shadow:0 2px 6px rgba(0,0,0,.2);
 }
@@ -205,7 +229,7 @@ input,textarea{font:inherit;color:inherit}
 .schedrow .sh{ font-size:12.5px; color:var(--ink-2); }
 .nexttag{
   display:inline-block; font-size:9.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
-  background:var(--gold); color:var(--navy); border-radius:4px; padding:2px 6px; margin-right:7px;
+  background:var(--gold); color:var(--on-gold); border-radius:4px; padding:2px 6px; margin-right:7px;
   vertical-align:middle;
 }
 .rankslot{
@@ -221,7 +245,7 @@ input,textarea{font:inherit;color:inherit}
 }
 .rankslot .badge{
   flex:0 0 auto; width:27px; height:27px; border-radius:50%;
-  background:var(--gold); color:var(--navy);
+  background:var(--gold); color:var(--on-gold);
   display:grid; place-items:center; font-size:13.5px; font-weight:700;
   font-family:var(--serif);
 }
@@ -337,7 +361,7 @@ input,textarea{font:inherit;color:inherit}
 .adminhdr .hdrrow{ display:flex; align-items:center; gap:13px; }
 .adminhdr .eyebrow{
   font-size:10px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase;
-  color:#7A5A16; margin-bottom:3px;
+  color:var(--gold-dim); margin-bottom:3px;
 }
 .adminhdr h1{
   font-family:var(--serif); font-size:19px; font-weight:700; margin:0;
@@ -381,7 +405,7 @@ input,textarea{font:inherit;color:inherit}
 .qrbox svg{ display:block; margin:0 auto 10px; }
 .qrbox .url{ font-size:11px; color:var(--ink-3); font-family:ui-monospace,Menlo,monospace; word-break:break-all; }
 .linkbox{
-  background:#FBFAF8; border:1px solid var(--hair); border-radius:var(--r-sm);
+  background:var(--surface-2); border:1px solid var(--hair); border-radius:var(--r-sm);
   padding:12px 13px; font-family:ui-monospace,Menlo,monospace; font-size:13px;
   color:var(--navy); word-break:break-all; text-align:center;
 }
@@ -409,7 +433,7 @@ input,textarea{font:inherit;color:inherit}
 }
 .adminbook .tag.archived{background:rgba(179,69,47,.1);color:var(--danger)}
 .adminbook .tag.current{background:rgba(46,107,79,.12);color:var(--green)}
-.adminbook .tag.review{background:rgba(194,144,46,.18);color:#7A5A16}
+.adminbook .tag.review{background:var(--gold-tint-2);color:var(--gold-dim)}
 .iconbtn{
   flex:0 0 auto; width:32px;height:32px;border-radius:8px; display:grid;place-items:center;
   color:var(--ink-3); border:1px solid var(--hair);
@@ -434,7 +458,7 @@ input,textarea{font:inherit;color:inherit}
 .stepperval{
   flex:1 1 auto; width:100%; min-width:0; text-align:center;
   font-family:var(--serif); font-size:34px; font-weight:700; color:var(--ink);
-  background:#FBFAF8; border:1px solid var(--hair); border-radius:var(--r-md);
+  background:var(--surface-2); border:1px solid var(--hair); border-radius:var(--r-md);
   padding:6px 4px; outline:none; -moz-appearance:textfield;
 }
 .stepperval:focus{ border-color:var(--gold); background:#fff; }
@@ -442,7 +466,7 @@ input,textarea{font:inherit;color:inherit}
 .stepperval::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
 
 .control{
-  width:100%; background:#FBFAF8; border:1px solid var(--hair); border-radius:var(--r-sm);
+  width:100%; background:var(--surface-2); border:1px solid var(--hair); border-radius:var(--r-sm);
   padding:11px 12px; font-size:14px; outline:none;
   transition:border-color .15s ease,box-shadow .15s ease;
 }
@@ -453,7 +477,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 
 .matchrow{
   display:flex; align-items:center; gap:11px; padding:10px; border-radius:var(--r-sm);
-  background:#FBFAF8; border:1px solid var(--hair); margin-bottom:8px;
+  background:var(--surface-2); border:1px solid var(--hair); margin-bottom:8px;
 }
 .matchrow .meta{flex:1;min-width:0}
 .matchrow .mq{font-size:11px;color:var(--ink-3);margin-bottom:3px}
@@ -462,11 +486,18 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 .matchrow.miss{ background:rgba(179,69,47,.05); border-color:rgba(179,69,47,.25); }
 .conf{ font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;
   padding:3px 6px;border-radius:4px;background:rgba(46,107,79,.12);color:var(--green) }
-.conf.low{ background:rgba(194,144,46,.16);color:#7A5A16 }
+.conf.low{ background:var(--gold-tint);color:var(--gold-dim) }
 
 .tiecard{ background:rgba(194,144,46,.09); border:1px solid rgba(194,144,46,.35);
   border-radius:var(--r-md); padding:14px; margin-bottom:12px; }
-.tiecard h3{ color:#7A5A16; }
+.tiecard h3{ color:var(--gold-dim); }
+
+/* Five places set a gold text colour INLINE in a JS template string, where a
+   stylesheet cannot override it — so no theme could ever repaint them. These
+   classes replace those literals. Same colours, now themeable.
+   Added 2026-11-27 with the role tokens. */
+.goldnote{ color:var(--gold-dim); }
+.goldnote-deep{ color:var(--gold-deep); }
 
 .switch{ display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .switch .lbl{ font-size:13px; font-weight:600; }
@@ -608,7 +639,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 .bookcard .nomby{ font-size:14px; color:var(--ink-3); margin-top:8px; }
 .bookcard .mine{
   display:inline-block; font-size:11px; font-weight:700; letter-spacing:.7px;
-  text-transform:uppercase; color:#7A5A16; background:rgba(194,144,46,.16);
+  text-transform:uppercase; color:var(--gold-dim); background:var(--gold-tint);
   padding:3px 7px; border-radius:4px; margin-top:7px;
 }
 .chev{ flex:0 0 auto; color:var(--ink-3); }
@@ -728,7 +759,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 .detail .membernote .who{
   display:block; margin-top:7px; font-style:normal;
   font-size:11px; letter-spacing:.06em; text-transform:uppercase;
-  color:#7A5A16;                      /* gold on cream is too weak at this size */
+  color:var(--gold-dim);              /* gold on cream is too weak at this size */
 }
 .divider{ height:1px; background:var(--hair); margin:18px 0; }
 .bigjacket{
@@ -767,7 +798,7 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 .lockcard{
   background:rgba(194,144,46,.09); border:1px solid rgba(194,144,46,.3);
   border-radius:var(--r-md); padding:14px; font-size:12.5px; line-height:1.55;
-  color:#6B4E13; text-align:center;
+  color:var(--gold-deep); text-align:center;
 }
 
 /* ================================= TOAST ================================== */
@@ -3650,7 +3681,7 @@ function adminMeeting(el){
             <span class="at" style="font-size:15px">${w ? esc(w.title) : '—'}</span>
             <div class="aa">${w ? esc(w.author) : ''}</div>
             <div class="aa" style="margin-top:5px">Won in ${plural(m.result.irv.rounds.length,'round','rounds')}</div>
-            ${(m.result.irv.tied||[]).length > 1 ? `<div class="aa" style="margin-top:3px;color:#7A5A16">
+            ${(m.result.irv.tied||[]).length > 1 ? `<div class="aa goldnote" style="margin-top:3px">
               Exact tie, broken by countback — not a call you had to make.</div>` : ''}
           </span>
         </div>
@@ -3675,7 +3706,7 @@ function adminMeeting(el){
 
   const c = STORE.club;
   const attWarn = voted > m.expectedVoters
-    ? `<div class="subnote" style="margin-top:8px;color:#7A5A16">
+    ? `<div class="subnote goldnote" style="margin-top:8px">
          ${voted} ballots cast — more than the ${m.expectedVoters} you set. Worth a quick check.</div>` : '';
   el.innerHTML = ctrl + `
     <div class="panel">
@@ -3859,7 +3890,7 @@ function adminBooks(el){
 
     ${d && d.loaded ? `<div class="panel" style="border:1px solid rgba(194,144,46,.45)">
       <h3>Check before adding</h3>
-      ${d.found ? '' : `<div class="subnote" style="color:#7A5A16;margin-bottom:10px">
+      ${d.found ? '' : `<div class="subnote goldnote" style="margin-bottom:10px">
         Nothing came back for that ISBN. The link is still good — fill in what
         you know and add it anyway.</div>`}
       <div class="adminbook" style="margin-bottom:12px">
@@ -3895,7 +3926,7 @@ function adminBooks(el){
       </div>
     </div>` : ''}
     ${STORE.books.some(b => b.needsReview) ? `<div class="panel" style="background:rgba(194,144,46,.09);border:1px solid rgba(194,144,46,.3)">
-      <h3 style="color:#7A5A16">Member suggestions to check — ${STORE.books.filter(b=>b.needsReview).length}</h3>
+      <h3 class="goldnote">Member suggestions to check — ${STORE.books.filter(b=>b.needsReview).length}</h3>
       ${STORE.books.filter(b => b.needsReview).map(b => `
         <div class="adminbook">${coverHTML(b)}
           <span class="meta"><span class="at">${esc(b.title)}</span><div class="aa">${esc(b.author)}</div>
@@ -3904,7 +3935,7 @@ function adminBooks(el){
             <svg width="14" height="11" viewBox="0 0 12 9" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1 4.4 4.3 7.7 11 1"/></svg>
           </button>
         </div>`).join('')}
-      <div class="subnote" style="margin-top:9px;color:#6B4E13">
+      <div class="subnote goldnote-deep" style="margin-top:9px">
         These are already on the table and votable. Tick one once you've confirmed
         the title, author and cover are right.
       </div>
