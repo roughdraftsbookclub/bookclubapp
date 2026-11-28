@@ -171,6 +171,24 @@ html[data-theme="lonesome"] .brandhdr{
 }
 html[data-theme="lonesome"] .brandhdr .logo{ display:none; }
 
+/* The organizer console's header logo becomes the weathered sign.
+
+   Two reasons, not one. The obvious one is that it matches the theme. The
+   real one is that the LOGO_SRC data URI renders badly at small sizes —
+   counters close up, so the O in ROUGH fills in solid. It is a low-
+   resolution PNG being scaled, and no CSS fixes that.
+
+   `content:` on an <img> swaps the rendered image while keeping the element
+   and its alt text, which beats hiding it and faking a background.
+
+   Scoped to the theme on purpose: switch back to Original and the original
+   logo returns, so the revert stays a true revert. */
+html[data-theme="lonesome"] .adminhdr .logo{
+  content:url('themes/lonesome-dove/sign.jpg');
+  width:150px; height:auto; border-radius:3px;
+  box-shadow:0 2px 8px rgba(0,0,0,.4);
+}
+
 /* Garland as a strip ABOVE the title, never behind it — gold serif over a
    busy photograph is the one legibility mistake this theme can make. */
 html[data-theme="lonesome"] .appbar{
