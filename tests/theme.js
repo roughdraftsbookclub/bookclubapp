@@ -145,6 +145,20 @@ const glow = src.match(/box-shadow:0 0 0 3px ([^,]+),var\(--shadow\)/);
 ck('the selected-card halo derives from a token',
    !!glow && glow[1].startsWith('var(--'), glow ? glow[1] : 'not found');
 
+/* Not colour, but the same class of defect: a CSS contract that nothing else
+   can see, where getting it wrong degrades a screen members use under time
+   pressure. .pickcard's title and author are both <span> with no whitespace
+   between them in the template, so without display:block they render as
+   "ShogunJames Clavell" and .pa's margin-top silently does nothing. That
+   shipped and sat on the live approval grid until 2026-11-27. */
+console.log('\nlayout contracts');
+ck('approval-card title is block-level',
+   /\.pickcard \.pt\{[^}]*display:block/.test(src),
+   'inline <span>s with no whitespace between them run together');
+ck('approval-card author is block-level',
+   /\.pickcard \.pa\{[^}]*display:block/.test(src),
+   'and its margin-top does nothing while inline');
+
 for (const [name, over] of Object.entries(THEMES)){
   const T = { ...BASE, ...over };
   console.log(`\ncontrast — ${name}`);

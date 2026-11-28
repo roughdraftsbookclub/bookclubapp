@@ -200,8 +200,18 @@ input,textarea{font:inherit;color:inherit}
 .pickcard:active{transform:scale(.97)}
 .pickcard[aria-pressed="true"]{ border-color:var(--gold); box-shadow:0 0 0 3px var(--gold-glow),var(--shadow); }
 .pickcard.maxed{ opacity:.42; }
-.pickcard .pt{ font-size:calc(12.5px * var(--book-title-scale)); font-weight:700; line-height:1.25; color:var(--ink); }
-.pickcard .pa{ font-size:11px; color:var(--ink-3); margin-top:2px; }
+/* `display:block` is load-bearing, not tidiness. Both of these are <span>s
+   with no whitespace between them in the template, so as inline boxes they
+   ran together — "ShōgunJames Clavell" — and .pa's margin-top did nothing,
+   because vertical margins do not apply to an inline box. Live on the
+   approval grid, the screen members look at most during a meeting.
+
+   Fixed here rather than in the markup because .pickcard is a <button>,
+   whose content model is phrasing content: the <div> the ranking row uses
+   for the same job would be invalid inside it. The ranking row gets away
+   with `<div class="ra">` because .rankslot is not a button. */
+.pickcard .pt{ display:block; font-size:calc(12.5px * var(--book-title-scale)); font-weight:700; line-height:1.25; color:var(--ink); }
+.pickcard .pa{ display:block; font-size:11px; color:var(--ink-3); margin-top:2px; }
 .tickmark{
   position:absolute; top:8px; right:8px; width:24px; height:24px; border-radius:50%;
   background:var(--gold); color:var(--on-gold); display:grid; place-items:center;

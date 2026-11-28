@@ -504,7 +504,7 @@ node tests/lookup.js     # 168 — Open Library parsing/failure modes, edition
                           #      blurb cleaning
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
-node tests/theme.js      # 35 — the theme contract: role tokens exist, no
+node tests/theme.js      # 37 — the theme contract: role tokens exist, no
                           #      colour literal sits where a theme cannot
                           #      reach it, and every declared fg/bg pair
                           #      clears a WCAG threshold
@@ -731,6 +731,17 @@ rather than silently testing nothing.
   enable it and explain on submit. Three of the `supabase/*.sql` repair
   files exist because members worked around this by pasting an `a.co` link
   the organizer then fixed by hand.
+- **An inline `<span>` cannot take a vertical margin, and two adjacent spans
+  with no whitespace between them run together.** The approval grid rendered
+  "ShogunJames Clavell" for months: `.pickcard`'s title and author are both
+  `<span>`, the template has no whitespace between the tags, and `.pa`'s
+  `margin-top:2px` did nothing because vertical margins do not apply to an
+  inline box. On the screen members look at most during a meeting.
+  Fixed with `display:block` in CSS rather than by changing the markup,
+  because **`.pickcard` is a `<button>`** — its content model is phrasing
+  content, so the `<div>` the ranking row uses for the identical job would
+  be invalid inside it. That asymmetry is why one screen was right and the
+  other wrong. Guarded in `tests/theme.js`.
 - **`.phone` is `overflow:hidden` and still scrolls.** The browser scrolls a
   focused input into view by nudging its nearest scrollable ancestor, and
   that offset survives an `innerHTML` swap — so a screen painted right after
