@@ -214,6 +214,15 @@ html[data-theme="lonesome"] .appbar{
   background:var(--cream) top/100% 42px no-repeat url('themes/lonesome-dove/garland.jpg');
   padding-top:52px;
 }
+/* padding-top clears the <h1> of the garland, but .nav-btn is
+   position:absolute and padding does not move it — so the back chevron was
+   drawn ON the photograph: measured 34 of its 36px over the lit pinecone, in
+   near-white (#EFEDE4) on a busy image. The garland band is always y 0–42
+   regardless of how tall the bar gets, so 44 is always clear of it, and it
+   lands level with the title. This is the exact legibility mistake the note
+   above the .appbar rule warns about; it was missed because the warning was
+   written about the heading and the chevron is the other child. */
+html[data-theme="lonesome"] .appbar .nav-btn{ top:44px; }
 
 /* The one red feature card, as in the artwork. */
 html[data-theme="lonesome"] .nowcard{
@@ -272,15 +281,22 @@ html[data-theme="lonesome"] .nowcard{
   letter-spacing:-.2px; color:var(--navy); line-height:1.25;
 }
 .appbar .sub{ margin-top:5px; font-size:12.5px; color:var(--ink-3); }
+/* 44×44, not 36×36: this is the back/close control on nine screens, one of
+   them mid-vote (rank-back). top/left are pulled in by the same 4px the box
+   grew, so the chevron stays exactly where it was drawn — the target got
+   bigger, the design did not move. */
 .appbar .nav-btn{
-  position:absolute; top:8px; left:10px; width:36px; height:36px;
+  position:absolute; top:4px; left:6px; width:44px; height:44px;
   border-radius:50%; display:grid; place-items:center; color:var(--navy);
 }
 .appbar .nav-btn:active{background:rgba(14,26,43,.07)}
 .body{ flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:2px 16px 8px; }
 .body.pad-lg{ padding:2px 22px 8px; }
 .actionbar{
-  flex:0 0 auto; padding:11px 18px 26px;
+  /* max() so this is a provable no-op wherever the inset is 0, which includes
+     iOS Safari in portrait — it only pays out when the app is added to the
+     home screen and the real gesture bar is under the Submit button. */
+  flex:0 0 auto; padding:11px 18px max(26px, env(safe-area-inset-bottom));
   background:linear-gradient(180deg,rgba(244,242,237,0),var(--cream) 30%);
 }
 .homebar{
@@ -397,7 +413,11 @@ html[data-theme="lonesome"] .nowcard{
   display:flex; align-items:center; gap:11px; background:var(--card);
   border-radius:var(--r-md); padding:10px 12px 10px 10px; margin-bottom:9px;
   box-shadow:var(--shadow); border:2px solid var(--gold);
-  touch-action:none; user-select:none;
+  /* -webkit- prefix is NOT optional: iOS Safari ignores unprefixed
+     user-select, so without it a long-press on a rank slot starts a text
+     selection instead of a drag — on the screen whose entire purpose is
+     dragging. Every member of this club is on an iPhone. */
+  touch-action:none; user-select:none; -webkit-user-select:none;
   transition:transform .18s cubic-bezier(.32,.72,0,1),box-shadow .15s ease,opacity .15s ease;
 }
 .rankslot.dragging{
@@ -412,8 +432,21 @@ html[data-theme="lonesome"] .nowcard{
 }
 .rankslot .meta{ flex:1 1 auto; min-width:0; }
 .rankslot .rt{ font-size:calc(13.5px * var(--book-title-scale)); font-weight:700; line-height:1.25; }
+/* Book titles are member-typed free text in a 144px box (maxlength 120, no
+   space required). One unbroken string used to run straight out of the card
+   on the two screens members use while voting. */
+.pickcard .pt, .rankslot .rt, .bookcard .title{ overflow-wrap:anywhere; }
 .rankslot .ra{ font-size:11.5px; color:var(--ink-3); margin-top:1px; }
-.handle{ flex:0 0 auto; color:#C2C6CE; padding:4px; cursor:grab; }
+/* The grab target was 24×28 sitting 11px from "remove this book from my
+   ranking" — a missed grab undid the member's work mid-vote. Padding grows
+   the hit box to ~38×46; the matching negative margins keep the glyph on the
+   exact pixel it was drawn (left +2 only, so the gap to the remove button
+   shrinks by 2px and no more, while the right side eats .rankslot's own
+   12px padding — room that is away from the destructive control). */
+.handle{
+  flex:0 0 auto; color:#C2C6CE; cursor:grab;
+  padding:16px 16px 16px 6px; margin:-12px -12px -12px -2px;
+}
 .handle:active{cursor:grabbing}
 
 .emptyslot{
@@ -499,9 +532,21 @@ html[data-theme="lonesome"] .nowcard{
 .barrow.out .bn{ text-decoration:line-through; color:var(--ink-3); }
 .barrow.out .barfill{ background:#C7CBD3; }
 
-.roundtabs{ display:flex; gap:5px; margin-bottom:13px; flex-wrap:wrap; }
+/* One scrollable row, not a wrapping block. The real 2026-08-13 meeting took
+   SIX rounds; six pills at ~64px plus gaps is 397px against the 311px a
+   375px phone leaves, so they wrapped into two rows of 24px-tall targets —
+   measured, not theorised. Scrolling sideways keeps every round reachable at
+   a proper size however many rounds a close night produces.
+   -webkit-overflow-scrolling for momentum on iOS; the scrollbar is hidden
+   because the pills themselves show there is more to the right. */
+.roundtabs{
+  display:flex; gap:5px; margin-bottom:13px; flex-wrap:nowrap;
+  overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+}
+.roundtabs::-webkit-scrollbar{ display:none }
 .roundtabs button{
-  font-size:11px; font-weight:600; padding:5px 10px; border-radius:999px;
+  flex:0 0 auto; white-space:nowrap; min-height:36px;
+  font-size:11px; font-weight:600; padding:5px 12px; border-radius:999px;
   background:rgba(14,26,43,.07); color:var(--ink-2);
 }
 .roundtabs button[aria-pressed="true"]{ background:var(--primary); color:var(--on-primary); }
@@ -560,7 +605,7 @@ html[data-theme="lonesome"] .nowcard{
 .subnote{ font-size:11.5px; color:var(--ink-3); line-height:1.55; }
 
 .qrbox{
-  background:#fff; border-radius:var(--r-md); padding:16px; text-align:center;
+  background:var(--card); border-radius:var(--r-md); padding:16px; text-align:center;
   border:1px solid var(--hair);
 }
 .qrbox svg{ display:block; margin:0 auto 10px; }
@@ -622,13 +667,20 @@ html[data-theme="lonesome"] .nowcard{
   background:var(--surface-2); border:1px solid var(--hair); border-radius:var(--r-md);
   padding:6px 4px; outline:none; -moz-appearance:textfield;
 }
-.stepperval:focus{ border-color:var(--gold); background:#fff; }
+/* var(--card), not #fff: the value is "the brightest surface in this theme",
+   and a hardcoded white put cream --ink text on white at ~1.0:1 — the
+   organizer's headcount vanished the moment they tapped it. */
+.stepperval:focus{ border-color:var(--gold); background:var(--card); }
 .stepperval::-webkit-outer-spin-button,
 .stepperval::-webkit-inner-spin-button{ -webkit-appearance:none; margin:0; }
 
 .control{
   width:100%; background:var(--surface-2); border:1px solid var(--hair); border-radius:var(--r-sm);
-  padding:11px 12px; font-size:14px; outline:none;
+  /* 16px is a hard iOS floor, not a taste call: Safari zooms the page in when
+     a focused input's text is under 16px, and it does NOT zoom back out on
+     blur — the member is left on a magnified, sideways-scrolling app for the
+     rest of the meeting. Every text field in this app is .control. */
+  padding:11px 12px; font-size:16px; outline:none;
   transition:border-color .15s ease,box-shadow .15s ease;
 }
 .control:focus{border-color:var(--navy);box-shadow:0 0 0 3px rgba(14,26,43,.09)}
@@ -961,11 +1013,11 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
 .counter.warn{ color:var(--danger); }
 .upload{
   width:100%; height:104px; border-radius:var(--r-sm);
-  border:1.5px dashed #C6C2B8; background:rgba(255,255,255,.5);
+  border:1.5px dashed var(--hair); background:var(--surface-2);
   display:flex; flex-direction:column; align-items:center; justify-content:center;
   gap:8px; color:var(--ink-2); font-size:13.5px; font-weight:500;
 }
-.upload:active{ border-color:var(--navy); background:#fff; }
+.upload:active{ border-color:var(--navy); background:var(--card); }
 .formintro{ text-align:center; margin:2px 0 20px; font-size:13.5px;
   line-height:1.5; color:var(--ink-2); }
 
@@ -974,6 +1026,37 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   border-radius:var(--r-md); padding:14px; font-size:12.5px; line-height:1.55;
   color:var(--gold-deep); text-align:center;
 }
+
+/* ================================ SANDBOX ================================= */
+/* Only ever rendered under ?sandbox. See the SANDBOX block in the script for
+   why this is safe to carry in the shipped file. */
+.sandboxbar{
+  flex:0 0 auto; width:100%; z-index:200;
+  background:repeating-linear-gradient(135deg,#B3452F,#B3452F 10px,#8E3524 10px,#8E3524 20px);
+  color:#fff; font-size:10px; font-weight:700; letter-spacing:.6px;
+  text-align:center; padding:3px 8px; text-transform:uppercase;
+}
+/* One nowrap, horizontally scrollable row on purpose: this is a measuring
+   tool, and a control strip that wraps to three rows steals 105px of the
+   screen you are trying to judge. */
+.sandboxctl{
+  flex:0 0 auto; width:100%; z-index:200; background:#15161A; color:#E8E9EC;
+  display:flex; flex-wrap:nowrap; gap:4px; align-items:center;
+  padding:4px 6px; font-size:11px;
+  overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none;
+}
+.sandboxctl::-webkit-scrollbar{ display:none }
+.sandboxctl > *{ flex:0 0 auto; white-space:nowrap }
+.sandboxctl button{
+  background:#2A2C33; color:#E8E9EC; border-radius:6px;
+  padding:5px 8px; font-size:11px; font-weight:600; min-height:28px;
+}
+.sandboxctl button:active{background:#3A3D46}
+.sandboxctl .ph{ font-weight:700; color:#E2B470; padding:0 4px; }
+.sandboxctl .blocked{ color:#F0A090; margin-left:auto; font-size:10px; }
+/* The phone stops being viewport-height and shares the column with the bars,
+   so nothing overlaps and .body keeps a real scrollport. */
+body.sandbox .phone{ height:auto; flex:1 1 auto; min-height:0; }
 
 /* ================================= TOAST ================================== */
 .toast{
@@ -989,9 +1072,54 @@ textarea.control{min-height:96px;resize:none;line-height:1.55}
   display:grid;place-items:center;color:var(--navy)}
 
 @media (max-width:460px){
-  body{background:var(--cream);padding:0}
-  .sim{max-width:none;padding:12px;background:#15161A;margin:0}
-  .phone{width:100%;height:auto;min-height:74vh;border:none;border-radius:0;box-shadow:none}
+  /* ⚠️ READ THIS BEFORE CHANGING ANY HEIGHT IN THIS BLOCK.
+     This app is a fixed-height flex shell: .phone is the display:flex column
+     that .body{flex:1 1 auto;overflow-y:auto} sizes against. If .phone is
+     allowed to grow to its content, .body never becomes a scrollport and the
+     DOCUMENT scrolls instead — and four things that look unrelated break at
+     once, on phones only, while the desktop simulator stays perfect:
+
+       * the toast paints ~1,100px below the fold, so EVERY member-facing
+         error ("Vote failed to save", "That's your 5") is silently invisible;
+       * vp()'s scroll reset zeroes .phone, which is no longer the scroller,
+         so screens paint mid-page with the back button above the fold;
+       * .pickbar's position:sticky has no scrollport to stick to, so the
+         "N of 5 chosen" counter scrolls away and never comes back;
+       * .actionbar stops being pinned, so Submit sits below the entire
+         ballot — 3,100px down on a 27-candidate night.
+
+     That was the live state until 2026-11-28 (measured at 375×667: .phone
+     943px tall in a 667px viewport, .body.scrollHeight === clientHeight).
+     body and .phone must BOTH be the dynamic viewport height, and they must
+     agree: body's base min-height:100vh is the LARGE viewport on iOS (URL bar
+     collapsed), so pinning only .phone to 100dvh leaves the document
+     scrollable by exactly the URL-bar height — the classic iOS trap.
+     Because nothing can scroll the document, iOS never collapses the bar,
+     which is what keeps 100dvh stable here rather than jumpy.
+     Guarded in tests/theme.js (L-series). */
+  body{
+    background:var(--cream); padding:0;
+    height:100vh;            /* fallback for anything without dvh */
+    height:100dvh;
+    min-height:0;
+    overflow:hidden;
+  }
+
+  /* The identity strip is a single non-interactive "You" pill
+     (renderIdentity). The organizer's console entry is .orgbar, rendered
+     INSIDE the viewport — not here — so hiding this costs no access and buys
+     back 61px, which is 9% of a 667px screen. It also stopped reading as part
+     of the app: a dark band above a themed header looks like browser chrome. */
+  .sim{display:none}
+
+  .phone{
+    width:100%; height:100%; min-height:0;
+    border:none; border-radius:0; box-shadow:none;
+  }
+
+  /* A drawn iOS home indicator, sitting exactly where iOS draws the real one.
+     Right for the desktop simulator, redundant-to-confusing on a real phone. */
+  .homebar{display:none}
 }
 </style>
 </head>
@@ -1609,6 +1737,12 @@ const esc = s => String(s).replace(/[&<>"']/g, c =>
 const vp = () => {
   const ph = document.querySelector('.phone');
   if (ph && ph.scrollTop) ph.scrollTop = 0;
+  /* Belt and braces: if the shell ever loses its fixed height again (see the
+     ⚠️ note in the max-width:460px block), the document becomes the scroller
+     and zeroing .phone alone silently stops working. Costs nothing when the
+     document is already at 0, which is the correct state. */
+  const se = document.scrollingElement || document.documentElement;
+  if (se && se.scrollTop) se.scrollTop = 0;
   return $('#viewport');
 };
 const plural = (n,s,p) => `${n} ${n===1?s:p}`;
@@ -2475,6 +2609,15 @@ function qrSVG(seed, size=132){
    ========================================================================== */
 let localPick = [];   // this browser's unsubmitted Phase One picks
 let localRank = [];   // this browser's unsubmitted Phase Two ranking
+/* The approval grid re-renders on EVERY tap (3539 below), and .pickcard
+   carries a staggered entrance animation with fill `both` — so each tap
+   replayed the stagger and held the last card at opacity:0 for i*26ms. At the
+   27 candidates of the real August meeting that is 702ms of full-screen
+   flicker per selection, on a screen showing two rows at a time. The stagger
+   is a first-impression flourish; it should play once per page load, not once
+   per vote. Not reset on purpose — re-entering the screen later in the same
+   session should be instant, not theatrical. */
+let approvalStaged = false;
 
 function renderMember(){
   const d = M(), me = activeDevice();
@@ -3425,7 +3568,7 @@ function memberApproval(token){
         ${M().candidateIds.filter(id => book(id)).map((id,i) => {
           const b = book(id), on = picked.includes(id);
           return `<button class="pickcard ${full && !on ? 'maxed':''}" data-id="${id}"
-                    aria-pressed="${on}" style="animation-delay:${i*26}ms">
+                    aria-pressed="${on}" style="animation-delay:${approvalStaged ? 0 : i*26}ms">
             <span class="tickmark"><svg width="12" height="9" viewBox="0 0 12 9" fill="none"><path d="M1 4.4 4.3 7.7 11 1" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
             ${coverHTML(b,'md')}
             <span><span class="pt">${esc(b.title)}</span><span class="pa">${esc(b.author)}</span></span>
@@ -3438,6 +3581,7 @@ function memberApproval(token){
         ${picked.length ? `Submit ${plural(picked.length,'choice','choices')}` : 'Choose at least one'}
       </button>
     </div>`;
+  approvalStaged = true;
 
   $$('.pickcard').forEach(el => el.onclick = () => {
     const id = el.dataset.id, i = picked.indexOf(id);
@@ -4692,7 +4836,181 @@ async function bootstrap(){
   }
 }
 
-bootstrap();
+/* ========================= SANDBOX MODE (?sandbox) ========================
+   The problem this solves: there is no way to look at the approval grid, the
+   ranking screen or the results screen on a real phone without putting the
+   LIVE meeting into that phase — which every member's phone would follow over
+   realtime. So those four screens, the ones that actually matter on meeting
+   night, were the only ones nobody could check before shipping a change. The
+   2026-11-28 phone-layout bugs all lived on exactly those screens, which is
+   why they survived months of testing: every screen anyone could reach was
+   fine.
+
+   HOW IT IS SAFE. Not by remembering to avoid writes — by making them
+   unreachable. `supa` is replaced with a wrapper before bootstrap uses it:
+
+     * READS pass straight through, so the sandbox runs on the real shelf,
+       with the real covers, titles and candidate list. A read is exactly what
+       any member's browser does on load; it changes nothing.
+     * WRITES cannot be sent. insert/update/upsert/delete are intercepted on
+       the object from(), which is the only place they can appear in this
+       codebase (every write here is the first call after from()). rpc() is
+       blocked outright, so no organizer action and no ballot can leave this
+       tab. Blocked attempts are counted and shown in the bar — if that number
+       moves, something tried to write and the sandbox caught it.
+     * Realtime is never subscribed, so a locally forced phase cannot be
+       clobbered by the server, and nothing this tab does is broadcast.
+
+   Because rpc() is blocked, the organizer console cannot be unlocked in
+   sandbox (check_organizer_code is an rpc). That is deliberate: this is for
+   walking the member screens.
+
+   Ballots are synthetic tokens (sb-…) injected straight into the local
+   meeting object, and every phase transition runs the SAME tested functions
+   the real app uses — computeShortlist / runIRV / buildArchiveQueue — so what
+   you see is the real engine on real candidates, just never persisted.
+
+   Reload without ?sandbox and none of this is reachable: one URLSearchParams
+   check, and the live path is byte-for-byte what it was. */
+const SANDBOX = new URLSearchParams(location.search).has('sandbox');
+const SB_PHASES = ['lobby','approval','shortlist_review','ranked','results'];
+let sbBlocked = 0;
+
+function sandboxClient(real){
+  const WRITES = ['insert','update','upsert','delete'];
+  const ok = () => Promise.resolve({ data:null, error:null });
+  const blocked = what => {
+    sbBlocked++;
+    console.warn('[sandbox] blocked write:', what);
+    const el = document.querySelector('.sandboxctl .blocked');
+    if (el) el.textContent = `${sbBlocked} write${sbBlocked===1?'':'s'} blocked`;
+    return ok();
+  };
+  return {
+    from(table){
+      const b = real.from(table);
+      return new Proxy(b, {
+        get(t, p){
+          if (WRITES.includes(p)) return (...a) => blocked(`${String(p)} on ${table}`);
+          const v = Reflect.get(t, p, t);
+          return typeof v === 'function' ? v.bind(t) : v;
+        },
+      });
+    },
+    rpc(fn){ return blocked(`rpc ${fn}`); },
+    channel(){ const s = { on(){ return s; }, subscribe(){ return s; },
+                           unsubscribe(){ return s; } }; return s; },
+    removeChannel(){},
+  };
+}
+
+const sbToken = () => 'sb-' + Math.random().toString(36).slice(2, 8);
+const sbShuffle = a => a.map(v => [Math.random(), v]).sort((x,y) => x[0]-y[0]).map(p => p[1]);
+
+/** Fake approval ballots: 1..maxApprovals picks each, drawn from the real
+    candidate list (skipping any id whose book is gone — the same guard the
+    approval grid itself carries). */
+function sbAddApprovalVoters(n){
+  const m = M(), ids = m.candidateIds.filter(id => book(id));
+  if (!ids.length) return;
+  for (let k = 0; k < n; k++){
+    const take = 1 + Math.floor(Math.random() * CONFIG.maxApprovals);
+    m.approvalBallots[sbToken()] = sbShuffle(ids).slice(0, take);
+  }
+}
+function sbAddRankVoters(n){
+  const m = M(), sl = (m.shortlistIds || []).filter(id => book(id));
+  if (!sl.length) return;
+  for (let k = 0; k < n; k++){
+    m.rankBallots[sbToken()] = sbShuffle(sl).slice(0, Math.min(CONFIG.rankDepth, sl.length));
+  }
+}
+
+/** Same transitions as closeApproval/startRanked/closeRanked, minus the RPC. */
+function sbSetPhase(next){
+  const m = M();
+  if (next === 'shortlist_review' || (next === 'ranked' && !m.shortlistIds)){
+    const { list, cutShort } = computeShortlist();
+    m.shortlistIds = list; m.cutShort = cutShort || null; m.tie = null;
+  }
+  if (next === 'results'){
+    const ballots = Object.values(m.rankBallots);
+    const irv = runIRV(ballots, m.shortlistIds || []);
+    m.result = { irv, winnerId: irv.winner, approval: approvalTally(),
+                 voters: approvalCount(), rankVoters: ballots.length };
+    m.archiveQueue = buildArchiveQueue();
+  }
+  m.phase = next;
+  localPick = []; localRank = [];
+  render();
+  paintSandboxBar();
+}
+
+function paintSandboxBar(){
+  const ctl = document.querySelector('.sandboxctl');
+  if (!ctl) return;
+  const m = M(), i = SB_PHASES.indexOf(m.phase);
+  ctl.innerHTML = `
+    <button data-sb="prev" ${i <= 0 ? 'disabled' : ''}>‹ phase</button>
+    <span class="ph">${esc(m.phase)}</span>
+    <button data-sb="next" ${i >= SB_PHASES.length-1 ? 'disabled' : ''}>phase ›</button>
+    <button data-sb="v1">+1 voter</button>
+    <button data-sb="v5">+5</button>
+    <button data-sb="reset">reset ballots</button>
+    <span class="blocked">${sbBlocked} write${sbBlocked===1?'':'s'} blocked</span>`;
+  ctl.querySelectorAll('[data-sb]').forEach(el => el.onclick = () => {
+    const a = el.dataset.sb, m2 = M(), j = SB_PHASES.indexOf(m2.phase);
+    if (a === 'prev')  return sbSetPhase(SB_PHASES[Math.max(0, j-1)]);
+    if (a === 'next')  return sbSetPhase(SB_PHASES[Math.min(SB_PHASES.length-1, j+1)]);
+    if (a === 'reset'){ m2.approvalBallots = {}; m2.rankBallots = {}; render(); return paintSandboxBar(); }
+    const n = a === 'v5' ? 5 : 1;
+    if (m2.phase === 'ranked') sbAddRankVoters(n); else sbAddApprovalVoters(n);
+    render(); paintSandboxBar();
+  });
+}
+
+function mountSandbox(){
+  document.body.classList.add('sandbox');
+  const phone = document.querySelector('.phone');
+  const bar = document.createElement('div');
+  bar.className = 'sandboxbar';
+  bar.textContent = 'Sandbox — nothing here is saved or shared';
+  const ctl = document.createElement('div');
+  ctl.className = 'sandboxctl';
+  document.body.insertBefore(bar, phone);
+  document.body.insertBefore(ctl, phone);
+  paintSandboxBar();
+}
+
+async function bootstrapSandbox(){
+  vp().innerHTML = `<div class="waiting"><h2>Loading…</h2><p>Fetching the shelf.</p></div>`;
+  try {
+    const { createClient } = await import('https://esm.sh/@supabase/supabase-js@2');
+    supa = sandboxClient(createClient(SUPABASE_URL, SUPABASE_ANON_KEY));
+
+    await refreshBooks();
+    await refreshSchedule();
+    const { data: clubRows } = await supa.from('club').select('*').limit(1);
+    const clubRow = (clubRows || [])[0];
+    if (clubRow){ STORE.club = clubFromRow(clubRow); STORE.currentBookId = clubRow.current_book_id; }
+    await refreshCurrentMeeting();
+    if (!STORE.meeting){
+      vp().innerHTML = `<div class="waiting"><h2>No meeting to sandbox</h2>
+        <p>There is no current meeting row to copy a candidate list from.</p></div>`;
+      return;
+    }
+    // Deliberately NOT subscribeRealtime(): a forced local phase must not be
+    // overwritten by the server, and this tab must stay silent.
+    render();
+    mountSandbox();
+  } catch (e){
+    console.error(e);
+    vp().innerHTML = `<div class="waiting"><h2>Couldn't connect</h2>
+      <p>Check your connection and reload.</p></div>`;
+  }
+}
+
+(SANDBOX ? bootstrapSandbox : bootstrap)();
 })();
 </script>
 </body>

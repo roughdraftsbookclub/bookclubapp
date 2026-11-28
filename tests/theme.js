@@ -231,5 +231,119 @@ theme "${name}" restates every surface token`);
   }
 }
 
+/* ==================== LAYOUT CONTRACT (L-series) ==========================
+ * Contrast was not the only thing CSS could break silently, and on
+ * 2026-11-28 it turned out not to be the worst. One declaration in the
+ * phone media query — .phone{height:auto} — switched off the fixed-height
+ * flex shell the whole app is built on. .body stopped being a scrollport,
+ * so the DOCUMENT scrolled instead, and four things broke at once on
+ * phones while the desktop simulator stayed perfect:
+ *
+ *     the toast painted ~1,100px below the fold, so every member-facing
+ *     error was invisible; vp()'s scroll reset zeroed the wrong element;
+ *     .pickbar stopped sticking; and Submit fell below the whole ballot.
+ *
+ * Nothing in 340 pure-function tests could see any of it, and no member
+ * reports an error they never saw. These checks are deliberately literal:
+ * they read the shipped CSS and assert the handful of declarations that,
+ * if they move, break a meeting. Extraction throws loudly rather than
+ * quietly testing nothing, same contract as the other harnesses.
+ * ======================================================================== */
+console.log('\nlayout contract (phones)');
+
+/* Comments are stripped before any rule is extracted, and selectors are
+   anchored to the start of a line. Both were learned the hard way writing
+   this: an unanchored `body{` matched `.body{flex:1 1 auto}` quoted INSIDE
+   the warning comment, and an unanchored `.appbar .nav-btn{` matched the
+   lonesome override earlier in the file instead of the base rule. Either one
+   silently tests the wrong declaration, which is worse than not testing. */
+const cssSrc = src.replace(/\/\*[\s\S]*?\*\//g, '');
+
+function braceBlock(startRe, hay = cssSrc){
+  const m = hay.match(startRe);
+  if (!m) return null;
+  let i = hay.indexOf('{', m.index), depth = 0;
+  const start = i;
+  for (; i < hay.length; i++){
+    if (hay[i] === '{') depth++;
+    else if (hay[i] === '}'){ depth--; if (!depth) return hay.slice(start + 1, i); }
+  }
+  return null;
+}
+function ruleBody(sel, hay = cssSrc){
+  const e = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = hay.match(new RegExp('(?:^|\\n)[ \\t]*' + e + '\\s*\\{([^{}]*)\\}'));
+  return m ? m[1] : null;
+}
+const num = (body, prop) => {
+  const m = body && body.match(new RegExp(prop + '\\s*:\\s*(-?[\\d.]+)px'));
+  return m ? parseFloat(m[1]) : null;
+};
+
+const mobile = braceBlock(/@media\s*\(max-width:\s*460px\)/);
+if (!mobile) throw new Error('theme.js: could not extract the max-width:460px block — the harness is broken, not the CSS');
+
+const mPhone = ruleBody('.phone', mobile);
+const mBody  = ruleBody('body', mobile);
+if (!mPhone || !mBody) throw new Error('theme.js: no .phone/body rule inside the phone media query');
+
+ck('L1 phone shell is not content-height',
+   !/height\s*:\s*auto/.test(mPhone), 'height:auto returns .body to a non-scrollport — see the header of this block');
+ck('L2 phone shell is pinned to the viewport',
+   /height\s*:\s*100%/.test(mPhone) || /100d?vh/.test(mPhone), 'the shell must have a definite height');
+ck('L3 body is the dynamic viewport',
+   /height\s*:\s*100dvh/.test(mBody), 'without dvh the body is the LARGE viewport on iOS and the document scrolls by the URL-bar height');
+ck('L4 body cannot scroll on a phone',
+   /overflow\s*:\s*hidden/.test(mBody), 'a scrollable document re-breaks the toast and lets iOS collapse the URL bar mid-vote');
+ck('L5 identity strip hidden on phones',
+   /\.sim\s*\{\s*display\s*:\s*none/.test(mobile), '61px of simulator chrome on a 667px screen');
+ck('L6 drawn home indicator hidden on phones',
+   /\.homebar\s*\{\s*display\s*:\s*none/.test(mobile), 'it lands exactly where iOS draws the real one');
+
+const navBtn = ruleBody('.appbar .nav-btn');
+ck('L7 back button is a 44px target',
+   num(navBtn, 'width') >= 44 && num(navBtn, 'height') >= 44,
+   `measured ${num(navBtn,'width')}x${num(navBtn,'height')} — back/close on nine screens, one mid-vote`);
+
+/* The themed appbar paints a photograph across the top of the bar and moves
+   the <h1> clear with padding-top. .nav-btn is position:absolute, which
+   padding does not move — so the chevron sat ON the garland, near-white over
+   a lit pinecone. Any theme that paints the appbar must restate nav-btn's
+   top the same way it restates .pickcard's border-color. */
+const themedBar = ruleBody('html[data-theme="lonesome"] .appbar');
+const themedNav = ruleBody('html[data-theme="lonesome"] .appbar .nav-btn');
+const band = themedBar && themedBar.match(/top\s*\/\s*100%\s+(\d+)px/);
+ck('L8 themed appbar declares its photo band', !!band, 'cannot verify the nav button clears it');
+if (band){
+  ck('L9 back button clears the themed photo band',
+     themedNav != null && num(themedNav, 'top') >= parseFloat(band[1]),
+     `band is ${band[1]}px, nav-btn top is ${themedNav ? num(themedNav,'top') : 'unset'}`);
+}
+
+const rankslot = ruleBody('.rankslot');
+ck('L10 rank slots suppress iOS text selection',
+   /-webkit-user-select\s*:\s*none/.test(rankslot || ''),
+   'iOS ignores unprefixed user-select, so a long-press selects text instead of dragging');
+
+const control = ruleBody('.control');
+ck('L11 text inputs are >= 16px',
+   num(control, 'font-size') >= 16,
+   `measured ${num(control,'font-size')}px — iOS zooms the page in on focus below 16 and does not zoom back out`);
+
+const roundtabs = ruleBody('.roundtabs');
+ck('L12 round tabs stay on one row',
+   /flex-wrap\s*:\s*nowrap/.test(roundtabs || '') && /overflow-x\s*:\s*auto/.test(roundtabs || ''),
+   'the real August meeting took 6 rounds, which wrapped into two rows of 24px targets');
+
+/* These three put a hardcoded white behind themeable text. On the live dark
+   theme that is a glaring white box, and on .stepperval it put cream --ink on
+   white at ~1:1 — the organizer's headcount vanished when tapped. */
+for (const sel of ['.qrbox', '.upload', '.stepperval:focus']){
+  const b = ruleBody(sel);
+  ck(`L13 ${sel} has no hardcoded white`,
+     b != null && !/background\s*:\s*(#fff\b|#ffffff\b|white\b|rgba?\(\s*255\s*,\s*255\s*,\s*255)/i.test(b),
+     'use var(--card) so a theme can reach it');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

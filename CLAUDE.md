@@ -504,11 +504,40 @@ node tests/lookup.js     # 168 — Open Library parsing/failure modes, edition
                           #      blurb cleaning
 node tests/schedule.js   # 24 — suggestion-window open/close, incl. every
                           #      confirmed date through Jul 2027 and December
-node tests/theme.js      # 85 — the theme contract: role tokens exist, no
+node tests/theme.js      # 100 — the theme contract + the L-series layout
+                          #      contract (see the phone-shell gotcha): role
+                          #      tokens exist, no
                           #      colour literal sits where a theme cannot
                           #      reach it, and every declared fg/bg pair
-                          #      clears a WCAG threshold
+                          #      clears a WCAG threshold, and the handful of
+                          #      declarations that break a meeting if moved
 ```
+
+**Walking the voting screens: `?sandbox`.** The approval grid, the ranking
+screen and the results screen could not be looked at without putting the
+LIVE meeting into that phase, which every member's phone follows over
+realtime — so the four screens that matter most on meeting night were the
+only ones nobody could check before shipping. That is precisely why the
+phone-shell bug below survived for months: every screen anyone could reach
+was fine.
+
+`index.html?sandbox` runs the real app on the real shelf, with writes made
+*unreachable* rather than merely avoided. `supa` is replaced before
+`bootstrap` uses it: reads pass straight through (a read is exactly what any
+member's browser does on load), `insert/update/upsert/delete` are
+intercepted on the object `from()` returns — the only place a write appears
+in this codebase, since every write here is the first call after `from()` —
+and `rpc()` is blocked outright. Realtime is never subscribed, so a locally
+forced phase can't be clobbered and nothing this tab does is broadcast. The
+bar carries a blocked-write counter: if it moves, something tried to write
+and was caught. Phase transitions run the same tested `computeShortlist` /
+`runIRV` / `buildArchiveQueue` the real app uses, on synthetic `sb-…`
+ballots.
+
+Because `rpc()` is blocked, the organizer console can't be unlocked in
+sandbox (`check_organizer_code` is an rpc). Deliberate — this is for the
+member screens. Without `?sandbox` the live path is unchanged: one
+`URLSearchParams` check.
 
 If you change `computeShortlist`, `runIRV`, `approvalTally`, `buildArchiveQueue`,
 `lookupBook`, `fetchEditionCandidates`, `fetchWorkDescription`, `isbn13to10`,
@@ -742,6 +771,54 @@ rather than silently testing nothing.
   content, so the `<div>` the ranking row uses for the identical job would
   be invalid inside it. That asymmetry is why one screen was right and the
   other wrong. Guarded in `tests/theme.js`.
+- **One declaration switched off the scroll architecture on every phone, and
+  nothing could see it.** `@media (max-width:460px)` set
+  `.phone{height:auto; min-height:74vh}`. `.phone` is the `display:flex`
+  column that `.body{flex:1 1 auto; overflow-y:auto}` sizes against, so
+  letting it grow to its content meant `.body` never became a scrollport and
+  the **document** scrolled instead. Four unrelated-looking things broke at
+  once, on phones only, while the desktop simulator stayed perfect:
+  the **toast painted ~1,100px below the fold**, so every member-facing error
+  (`Vote failed to save`, `That's your 5`) was silently invisible; `vp()`'s
+  scroll reset zeroed `.phone`, which was no longer the scroller, so screens
+  painted mid-page with the back button above the fold; `.pickbar`'s
+  `position:sticky` had no scrollport to stick to; and `.actionbar` stopped
+  being pinned, putting Submit below the entire ballot — ~3,100px down on a
+  27-candidate night. The approval screen's own `.body` scroll-preservation
+  was dead for the same reason. Measured live at 375×667 before the fix:
+  `.phone` **943px tall in a 667px viewport**, `.body.scrollHeight ===
+  clientHeight`. Fixed 2026-11-28 by pinning **both** `body` and `.phone` to
+  the dynamic viewport. They must agree: `body`'s base `min-height:100vh` is
+  the LARGE viewport on iOS (URL bar collapsed), so pinning only `.phone` to
+  `100dvh` leaves the document scrollable by exactly the URL-bar height —
+  the classic iOS trap. Because nothing can scroll the document, iOS never
+  collapses the bar, which is what keeps `100dvh` stable rather than jumpy.
+  Guarded by the L-series in `tests/theme.js`, validated by restoring the
+  bug and watching L1/L2 fail. **This is the strongest argument for
+  `?sandbox`**: three of the four casualties were on screens nobody could
+  reach without starting a real meeting.
+- **A theme that paints the appbar must move `.nav-btn` too.** The lonesome
+  theme paints a garland photo across `y 0–42` of `.appbar` and pushes the
+  `<h1>` clear with `padding-top:52px` — but `.nav-btn` is
+  `position:absolute`, which padding does not move. Measured: **34 of its
+  36px sat on the photograph**, near-white over a lit pinecone. The comment
+  above that rule anticipated exactly this legibility mistake and still
+  missed it, because it was written about the heading and the chevron is the
+  other child. Same shape as the `.pickcard` border trap: a theme rule
+  outranks a base rule, and the absolutely-positioned child is the one that
+  gets forgotten. Guarded (L8/L9).
+- **Two iOS rules this club cannot opt out of, since everyone is on an
+  iPhone.** (1) **Inputs must be ≥16px.** Safari zooms the page in when a
+  focused input's text is smaller, and does *not* zoom back out on blur —
+  one tap on the suggest form left a member on a magnified, sideways-
+  scrolling app for the rest of the meeting. `.control` was 14px. (2)
+  **`user-select` needs the `-webkit-` prefix.** iOS ignores the unprefixed
+  property, so `.rankslot` long-presses started a text selection instead of
+  a drag, on the screen whose entire purpose is dragging. Both guarded
+  (L10/L11). Related: the drag handle was a 24×28 target 11px from "remove
+  this book from my ranking" — now ~38×46, grown with padding plus matching
+  negative margins so the glyph did not move, and grown *away* from the
+  destructive control.
 - **`.phone` is `overflow:hidden` and still scrolls.** The browser scrolls a
   focused input into view by nudging its nearest scrollable ancestor, and
   that offset survives an `innerHTML` swap — so a screen painted right after
